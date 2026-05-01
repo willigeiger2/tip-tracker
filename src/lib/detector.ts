@@ -75,10 +75,15 @@ export async function initPoseDetector(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
     );
 
+    // Firefox has compatibility issues with MediaPipe's GPU delegate;
+    // fall back to CPU to avoid hangs and "slow script" warnings.
+    const isFirefox = typeof navigator !== 'undefined' &&
+      navigator.userAgent.toLowerCase().includes('firefox');
+
     poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-        delegate: 'GPU'
+        delegate: isFirefox ? 'CPU' : 'GPU'
       },
       runningMode: 'VIDEO',
       numPoses: numPoses,

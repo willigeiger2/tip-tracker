@@ -317,7 +317,8 @@ import Layout from '../layouts/Layout.astro';
 
   /**
    * Map normalized video coordinates (0-1) to canvas/screen coordinates
-   * Accounts for object-fit: cover cropping - only the visible portion maps to the screen
+   * Accounts for object-fit: cover cropping - only the visible portion maps to the screen.
+   * Also mirrors horizontally so the overlay matches the mirrored video feed.
    */
   function mapToCanvas(normX: number, normY: number): { x: number; y: number } {
     const { scaleX, scaleY, cropX, cropY } = getVideoMapping();
@@ -334,7 +335,8 @@ import Layout from '../layouts/Layout.astro';
     const screenX = (videoX - cropX) * scaleX;
     const screenY = (videoY - cropY) * scaleY;
 
-    return { x: screenX, y: screenY };
+    // Mirror horizontally to match the CSS-transformed video element
+    return { x: containerWidth - screenX, y: screenY };
   }
 
   async function initializeDetector() {
@@ -804,7 +806,8 @@ import Layout from '../layouts/Layout.astro';
   .overlay-canvas {
     position: absolute;
     pointer-events: none;
-    transform: scaleX(-1);
+    /* transform removed — mirroring is now done in mapToCanvas() so
+       Firefox correctly renders shadowBlur without CSS-transform bugs */
     width: 100%;
     height: 100%;
   }
