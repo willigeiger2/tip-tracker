@@ -1,0 +1,350 @@
+---
+// Collapsible controls panel + hamburger toggle. Markup only; behavior is wired in index.astro
+// by element id, so ids here are part of the page's contract.
+---
+
+<!-- Hamburger Menu Toggle -->
+<button id="menuToggle" aria-label="Toggle menu">
+  <span></span>
+  <span></span>
+  <span></span>
+</button>
+
+<!-- Collapsible Controls Panel -->
+<div id="controls" class="collapsed">
+  <h1>Tip Track</h1>
+  
+  <div class="control-group">
+    <label for="trackingMode">Tracking Mode</label>
+    <select id="trackingMode">
+      <option value="hand">Hand Tracking (Demo)</option>
+      <option value="pose">Pose Tracking (Full Body)</option>
+    </select>
+    <small class="hint">Hand: index fingertip = sword tip</small>
+  </div>
+
+  <div class="control-group">
+    <label for="debugMode">Debug Mode</label>
+    <select id="debugMode">
+      <option value="none">Production (Trails)</option>
+      <option value="landmarks">Landmarks</option>
+      <option value="skeleton">Skeleton</option>
+      <option value="vectors">Vectors + Grid</option>
+      <option value="tips-only">Tip Points</option>
+      <option value="trails-only">Trails Only</option>
+      <option value="lightsaber">Lightsaber</option>
+      <option value="heatmap">Heatmap</option>
+      <option value="all">All Debug</option>
+    </select>
+  </div>
+
+  <div class="control-group">
+    <label for="trailLength">
+      Trail Length: <span id="trailLengthValue">30</span>
+    </label>
+    <input
+      type="range"
+      id="trailLength"
+      min="5"
+      max="60"
+      value="30"
+      step="5"
+    />
+  </div>
+
+  <div class="control-group">
+    <label for="inferenceRate">
+      Inference Rate: <span id="inferenceRateValue">15</span> fps
+    </label>
+    <input 
+      type="range" 
+      id="inferenceRate" 
+      min="5" 
+      max="30" 
+      value="15" 
+      step="1"
+    />
+  </div>
+
+  <details class="advanced-controls">
+    <summary>Advanced / Effects</summary>
+    <div class="control-group">
+      <label for="effectMode">Effect Mode</label>
+      <select id="effectMode">
+        <option value="none">None</option>
+        <option value="lightsaber-glow">Lightsaber Glow</option>
+        <option value="matrix">Matrix</option>
+        <option value="motion-blur">Motion Blur</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label for="glowIntensity">
+        Glow Intensity: <span id="glowIntensityValue">1.0</span>
+      </label>
+      <input 
+        type="range" 
+        id="glowIntensity" 
+        min="0" 
+        max="2" 
+        value="1" 
+        step="0.1"
+      />
+    </div>
+  </details>
+
+  <div class="control-group button-group">
+    <button id="clearTrails" class="btn-secondary">Clear Trails</button>
+    <button id="toggleCamera" class="btn-primary">Start Camera</button>
+  </div>
+
+  <div class="status">
+    <span id="detectionStatus">Initializing...</span>
+    <span id="fpsCounter">-- fps</span>
+  </div>
+</div>
+
+<style>
+  /* Hamburger Menu Toggle */
+  #menuToggle {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 50px;
+    height: 50px;
+    background: linear-gradient(180deg, rgba(40, 40, 40, 0.6) 0%, rgba(0, 0, 0, 0.6) 100%);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    z-index: 1001;
+    transition: background 0.3s ease;
+  }
+
+  #menuToggle:hover {
+    background: linear-gradient(180deg, rgba(60, 60, 60, 0.7) 0%, rgba(20, 20, 20, 0.7) 100%);
+  }
+
+  #menuToggle span {
+    width: 30px;
+    height: 3px;
+    background: white;
+    border-radius: 2px;
+    transition: all 0.3s ease;
+  }
+
+  /* Controls Panel */
+  #controls {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(180deg, rgba(45, 45, 45, 0.75) 0%, rgba(0, 0, 0, 0.75) 100%);
+    backdrop-filter: blur(10px);
+    padding: 25px;
+    border-radius: 12px;
+    color: white;
+    min-width: 280px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    z-index: 1000;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  #controls.collapsed {
+    transform: translateX(calc(100% + 40px));
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  h1 {
+    margin: 35px 0 20px 0;
+    font-size: 1.75rem;
+    font-weight: 600;
+    text-align: center;
+    color: white;
+  }
+
+  .control-group {
+    margin-bottom: 18px;
+  }
+
+  .control-group:last-child {
+    margin-bottom: 0;
+  }
+
+  label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  select, input[type="range"] {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-size: 0.9rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  select:focus, input:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  select option {
+    background: #1a1a1a;
+    color: white;
+  }
+
+  input[type="range"] {
+    padding: 0;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    border: none;
+  }
+
+  .hint {
+    display: block;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 4px;
+    font-style: italic;
+  }
+
+  .advanced-controls {
+    margin: 15px 0;
+    padding: 10px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .advanced-controls summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.6);
+    user-select: none;
+    transition: color 0.2s ease;
+  }
+
+  .advanced-controls summary:hover {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .advanced-controls[open] summary {
+    margin-bottom: 15px;
+  }
+
+  .button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  button {
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    font-size: 0.95rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-primary {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.5);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .status {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 18px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  #fpsCounter {
+    font-family: monospace;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  /* Scrollbar styling for controls panel */
+  #controls::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  #controls::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+  }
+
+  #controls::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+  }
+
+  #controls::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+</style>
