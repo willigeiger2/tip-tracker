@@ -120,20 +120,13 @@ import Layout from '../layouts/Layout.astro';
 
 <script>
   // Import modules
-  import {
-    initDetector,
-    detect,
-    resetCurrentDetector,
-    POSE_LANDMARKS,
-    POSE_CONNECTIONS,
-    HAND_LANDMARKS,
-    HAND_CONNECTIONS
-  } from '../lib/unified-detector';
+  import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager, FlashEffect } from '../lib/effects';
   import { createCoordinateMapper, getViewportSize } from '../lib/app/coordinate-mapper';
   import { createAppState, detectionIntervalMs } from '../lib/app/state';
+  import { renderFrame, type RenderContext } from '../lib/app/render-modes';
   import { CameraSource } from '../lib/app/sources/camera-source';
   import type { VideoSource } from '../lib/app/sources/source';
   import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
@@ -179,11 +172,18 @@ import Layout from '../layouts/Layout.astro';
   let currentDetections: DetectionResult[] = [];
   let isSwitchingMode = false;
 
+  /**
+   * Map normalized video coordinates (0-1) to overlay-canvas pixels.
+   * Accounts for object-fit: cover cropping; re-reads viewport and video size on every call.
+   */
+  const mapToCanvas = createCoordinateMapper(video);
+
   // Managers
   const trailManager = new TrailManager({ maxLength: appState.get().trailLength });
   const trailRenderer = new TrailRenderer(overlay);
   const debugRenderer = new DebugRenderer(overlay);
   const effectManager = new EffectManager(overlay.getContext('2d')!);
+  const renderContext: RenderContext = { overlay, trailRenderer, debugRenderer, mapToCanvas };
 
   // Set up coordinate mappers after they're created
   function setupCoordinateMappers() {
@@ -284,12 +284,6 @@ import Layout from '../layouts/Layout.astro';
     // console.log('[Resize] Container:', containerWidth, 'x', containerHeight, 
     //             'Video:', video.videoWidth, 'x', video.videoHeight);
   }
-
-  /**
-   * Map normalized video coordinates (0-1) to overlay-canvas pixels.
-   * Accounts for object-fit: cover cropping; re-reads viewport and video size on every call.
-   */
-  const mapToCanvas = createCoordinateMapper(video);
 
   async function initializeDetector() {
     const { trackingMode } = appState.get();
@@ -494,223 +488,19 @@ import Layout from '../layouts/Layout.astro';
     }
 
     const { trackingMode, debugMode } = appState.get();
-    const fencers = trailManager.getFencers();
 
-    // Render based on debug mode
-    switch (debugMode) {
-      case 'none':
-        trailRenderer.renderTrails(fencers);
-        trailRenderer.renderTipDots(fencers);
-        break;
-
-      case 'landmarks':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ff00');
-          });
-        } else {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ffff');
-          });
-        }
-        break;
-
-      case 'skeleton':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderSkeleton(detection.landmarks, POSE_CONNECTIONS, fencer?.color ?? '#00ff00');
-          });
-        } else {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderSkeleton(detection.landmarks, HAND_CONNECTIONS, fencer?.color ?? '#00ffff');
-          });
-        }
-        break;
-
-      case 'vectors':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const lm = detection.landmarks;
-            const wrist = lm[POSE_LANDMARKS.RIGHT_WRIST];
-            const elbow = lm[POSE_LANDMARKS.RIGHT_ELBOW];
-            if (wrist && elbow && detection.tip) {
-              const fencer = fencers.get(detection.id);
-              if (fencer) {
-                // Use new hand-starting vector for Pose mode
-                debugRenderer.renderVectors(wrist, elbow, detection.tip, fencer.color, true);
-              }
-            }
-          });
-        } else {
-          const ctx = overlay.getContext('2d')!;
-          
-          ctx.save();
-          currentDetections.forEach(detection => {
-            const lm = detection.landmarks;
-            const wrist = lm[HAND_LANDMARKS.WRIST];
-            const indexMcp = lm[HAND_LANDMARKS.INDEX_FINGER_MCP];
-            const tip = lm[HAND_LANDMARKS.INDEX_FINGER_TIP];
-            const fencer = fencers.get(detection.id);
-            
-            if (wrist && indexMcp && tip && fencer) {
-              // Use mapToCanvas for coordinate transformation
-              const wristPos = mapToCanvas(wrist.x, wrist.y);
-              const mcpPos = mapToCanvas(indexMcp.x, indexMcp.y);
-              const tipPos = mapToCanvas(tip.x, tip.y);
-              
-              ctx.strokeStyle = '#ffff00';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.moveTo(wristPos.x, wristPos.y);
-              ctx.lineTo(mcpPos.x, mcpPos.y);
-              ctx.stroke();
-              
-              ctx.strokeStyle = fencer.color;
-              ctx.setLineDash([5, 5]);
-              ctx.beginPath();
-              ctx.moveTo(mcpPos.x, mcpPos.y);
-              ctx.lineTo(tipPos.x, tipPos.y);
-              ctx.stroke();
-              ctx.setLineDash([]);
-              
-              ctx.fillStyle = fencer.color;
-              ctx.beginPath();
-              ctx.arc(tipPos.x, tipPos.y, 6, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          });
-          ctx.restore();
-        }
-        
-        // Draw calibration grid in vectors mode to help diagnose alignment
-        drawCalibrationGrid();
-        break;
-
-      case 'tips-only':
-        trailRenderer.renderTipDots(fencers);
-        break;
-
-      case 'trails-only':
-        trailRenderer.renderTrailsOnly(fencers);
-        break;
-
-      case 'lightsaber':
-        currentDetections.forEach(detection => {
-          const fencer = fencers.get(detection.id);
-          if (!fencer) return;
-          
-          if (trackingMode === 'pose') {
-            const wrist = detection.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
-            if (wrist && detection.tip) {
-              debugRenderer.renderLightsaber(wrist, detection.tip, fencer.color);
-            }
-          } else {
-            const indexMcp = detection.landmarks[HAND_LANDMARKS.INDEX_FINGER_MCP];
-            if (indexMcp && detection.tip) {
-              debugRenderer.renderLightsaber(indexMcp, detection.tip, fencer.color);
-            }
-          }
-        });
-        break;
-
-      case 'heatmap':
-        trailRenderer.renderTrails(fencers);
-        break;
-
-      case 'all':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ff00');
-            debugRenderer.renderSkeleton(detection.landmarks, POSE_CONNECTIONS, fencer?.color ?? '#00ff00');
-          });
-        } else {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ffff');
-            debugRenderer.renderSkeleton(detection.landmarks, HAND_CONNECTIONS, fencer?.color ?? '#00ffff');
-          });
-        }
-        trailRenderer.renderTrails(fencers);
-        trailRenderer.renderTipDots(fencers);
-        break;
-    }
+    renderFrame(renderContext, {
+      trackingMode,
+      debugMode,
+      fencers: trailManager.getFencers(),
+      detections: currentDetections,
+    });
 
     // Render any active effects on top
     // Ensure valid canvas dimensions
     const effectWidth = Math.max(1, overlay.width);
     const effectHeight = Math.max(1, overlay.height);
     effectManager.updateAndRender(timestamp, effectWidth, effectHeight);
-  }
-
-  // Draw calibration grid for debugging alignment issues
-  function drawCalibrationGrid() {
-    const ctx = overlay.getContext('2d')!;
-    const width = overlay.width;
-    const height = overlay.height;
-    
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    
-    // Draw 10% grid lines
-    for (let i = 1; i < 10; i++) {
-      const x = (width * i) / 10;
-      const y = (height * i) / 10;
-      
-      // Vertical lines
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      
-      // Horizontal lines
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-    
-    // Draw corner markers at mapped video corners
-    const tl = mapToCanvas(0, 0);
-    const tr = mapToCanvas(1, 0);
-    const bl = mapToCanvas(0, 1);
-    const br = mapToCanvas(1, 1);
-    
-    ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([]);
-    
-    // Draw video bounds
-    ctx.beginPath();
-    ctx.moveTo(tl.x, tl.y);
-    ctx.lineTo(tr.x, tr.y);
-    ctx.lineTo(br.x, br.y);
-    ctx.lineTo(bl.x, bl.y);
-    ctx.closePath();
-    ctx.stroke();
-    
-    // Draw corner markers
-    const corners = [tl, tr, bl, br];
-    corners.forEach((corner, i) => {
-      ctx.fillStyle = '#00ffff';
-      ctx.beginPath();
-      ctx.arc(corner.x, corner.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Label
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '12px monospace';
-      const labels = ['TL', 'TR', 'BL', 'BR'];
-      ctx.fillText(labels[i], corner.x + 10, corner.y - 10);
-    });
-    
-    ctx.restore();
   }
 
   // Start initialization
