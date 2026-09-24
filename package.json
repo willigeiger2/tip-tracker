@@ -10,17 +10,23 @@
 		"build": "astro build",
 		"preview": "astro build && astro preview",
 		"astro": "astro",
+		"check": "astro check",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"generate-types": "wrangler types",
 		"deploy": "astro build && wrangler deploy",
 		"cf-typegen": "wrangler types"
 	},
 	"dependencies": {
-		"@astrojs/cloudflare": "^13.2.1",
-		"@mediapipe/tasks-vision": "^0.10.34",
-		"astro": "^6.1.9"
+		"@astrojs/cloudflare": "^13.7.0",
+		"@mediapipe/tasks-vision": "^0.10.35",
+		"astro": "^6.4.8"
 	},
 	"devDependencies": {
-		"wrangler": "^4.85.0"
+		"@astrojs/check": "^0.9.10",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.11",
+		"wrangler": "^4.139.0"
 	},
 	"overrides": {
 		"vite": "^7"

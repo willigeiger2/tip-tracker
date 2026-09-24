@@ -67,6 +67,7 @@ export class TrailManager {
         lastPositions.set(id, {
           x: lastPoint.x,
           y: lastPoint.y,
+          z: lastPoint.z,
           confidence: 1,
           timestamp: lastPoint.timestamp,
           side: fencer.side,

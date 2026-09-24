@@ -136,23 +136,30 @@ import Layout from '../layouts/Layout.astro';
   import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
 
   // DOM Elements
-  const video = document.getElementById('video') as HTMLVideoElement;
-  const overlay = document.getElementById('overlay') as HTMLCanvasElement;
-  const menuToggle = document.getElementById('menuToggle') as HTMLButtonElement;
-  const controls = document.getElementById('controls') as HTMLDivElement;
-  const trackingModeSelect = document.getElementById('trackingMode') as HTMLSelectElement;
-  const debugModeSelect = document.getElementById('debugMode') as HTMLSelectElement;
-  const trailLengthInput = document.getElementById('trailLength') as HTMLInputElement;
-  const trailLengthValue = document.getElementById('trailLengthValue') as HTMLSpanElement;
-  const inferenceRateInput = document.getElementById('inferenceRate') as HTMLInputElement;
-  const inferenceRateValue = document.getElementById('inferenceRateValue') as HTMLSpanElement;
-  const glowIntensityInput = document.getElementById('glowIntensity') as HTMLInputElement;
-  const glowIntensityValue = document.getElementById('glowIntensityValue') as HTMLSpanElement;
-  const effectModeSelect = document.getElementById('effectMode') as HTMLSelectElement;
-  const clearTrailsBtn = document.getElementById('clearTrails') as HTMLButtonElement;
-  const toggleCameraBtn = document.getElementById('toggleCamera') as HTMLButtonElement;
-  const detectionStatus = document.getElementById('detectionStatus') as HTMLSpanElement;
-  const fpsCounter = document.getElementById('fpsCounter') as HTMLSpanElement;
+  // Unconstrained generic: in TS 6's DOM lib HTMLSelectElement is not assignable to HTMLElement
+  function byId<T>(id: string): T {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`Missing element #${id}`);
+    return el as unknown as T;
+  }
+
+  const video = byId<HTMLVideoElement>('video');
+  const overlay = byId<HTMLCanvasElement>('overlay');
+  const menuToggle = byId<HTMLButtonElement>('menuToggle');
+  const controls = byId<HTMLDivElement>('controls');
+  const trackingModeSelect = byId<HTMLSelectElement>('trackingMode');
+  const debugModeSelect = byId<HTMLSelectElement>('debugMode');
+  const trailLengthInput = byId<HTMLInputElement>('trailLength');
+  const trailLengthValue = byId<HTMLSpanElement>('trailLengthValue');
+  const inferenceRateInput = byId<HTMLInputElement>('inferenceRate');
+  const inferenceRateValue = byId<HTMLSpanElement>('inferenceRateValue');
+  const glowIntensityInput = byId<HTMLInputElement>('glowIntensity');
+  const glowIntensityValue = byId<HTMLSpanElement>('glowIntensityValue');
+  const effectModeSelect = byId<HTMLSelectElement>('effectMode');
+  const clearTrailsBtn = byId<HTMLButtonElement>('clearTrails');
+  const toggleCameraBtn = byId<HTMLButtonElement>('toggleCamera');
+  const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
+  const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
 
   // State
   let isCameraRunning = false;
