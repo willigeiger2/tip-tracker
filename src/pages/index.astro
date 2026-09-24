@@ -5,25 +5,15 @@ import ControlPanel from '../components/ControlPanel.astro';
 
 <Layout>
   <div id="container">
-    <video 
-      id="video" 
-      class="video-element"
-      autoplay 
-      playsinline 
-      muted
-    ></video>
-    <canvas 
-      id="overlay" 
-      class="overlay-canvas"
-    ></canvas>
-    
+    <video id="video" class="video-element fit-cover mirrored" autoplay playsinline muted></video>
+    <canvas id="overlay" class="overlay-canvas mirrored"></canvas>
+
     <ControlPanel />
   </div>
 </Layout>
 
 <script>
-  // Page bootstrap: look up DOM elements, construct the app modules, bind UI events.
-  // All behavior lives in src/lib; this file should stay wiring-only.
+  // Page bootstrap: look up DOM elements, construct app modules, bind UI events.
   import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
@@ -35,21 +25,24 @@ import ControlPanel from '../components/ControlPanel.astro';
   import { installOverlaySizing } from '../lib/app/overlay-sizing';
   import { DetectorController } from '../lib/app/detector-controller';
   import { CameraSource } from '../lib/app/sources/camera-source';
-  import type { VideoSource } from '../lib/app/sources/source';
+  import { UrlSource, UnsupportedVideoSourceError } from '../lib/app/sources/url-source';
+  import type { SourceKind, VideoSource } from '../lib/app/sources/source';
   import type { DebugMode, EffectMode, TrackingMode } from '../types/fencing';
 
-  // ---- DOM ----
-  // Unconstrained generic: in TS 6's DOM lib HTMLSelectElement is not assignable to HTMLElement
   function byId<T>(id: string): T {
     const el = document.getElementById(id);
     if (!el) throw new Error(`Missing element #${id}`);
     return el as unknown as T;
   }
 
+  // ---- DOM ----
   const video = byId<HTMLVideoElement>('video');
   const overlay = byId<HTMLCanvasElement>('overlay');
   const menuToggle = byId<HTMLButtonElement>('menuToggle');
   const controls = byId<HTMLDivElement>('controls');
+  const sourceModeSelect = byId<HTMLSelectElement>('sourceMode');
+  const videoUrlInput = byId<HTMLInputElement>('videoUrl');
+  const loadVideoBtn = byId<HTMLButtonElement>('loadVideo');
   const trackingModeSelect = byId<HTMLSelectElement>('trackingMode');
   const debugModeSelect = byId<HTMLSelectElement>('debugMode');
   const trailLengthInput = byId<HTMLInputElement>('trailLength');
@@ -62,18 +55,22 @@ import ControlPanel from '../components/ControlPanel.astro';
   const clearTrailsBtn = byId<HTMLButtonElement>('clearTrails');
   const toggleCameraBtn = byId<HTMLButtonElement>('toggleCamera');
   const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
+  const playbackStatus = byId<HTMLSpanElement>('playbackStatus');
   const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
 
+  const cameraOnlyElements = Array.from(document.querySelectorAll<HTMLElement>('.camera-only'));
+  const videoOnlyElements = Array.from(document.querySelectorAll<HTMLElement>('.video-only'));
+
   // ---- App modules ----
-  // User-facing configuration (tracking mode, debug mode, rates). UI writes, loop reads.
   const appState = createAppState();
 
-  // Video source. Camera today; step 2 adds URL/HLS playback and swaps activeSource.
   const cameraSource = new CameraSource();
-  const activeSource: VideoSource = cameraSource;
+  const urlSource = new UrlSource();
+  let activeSource: VideoSource = cameraSource;
+  let switchingSource = false;
 
-  // Normalized video coords -> overlay pixels (object-fit: cover aware)
-  const mapToCanvas = createCoordinateMapper(video);
+  // Mapper tracks activeSource.fit dynamically (camera: cover, URL video: contain).
+  const mapToCanvas = createCoordinateMapper(video, () => activeSource.fit);
 
   const trailManager = new TrailManager({ maxLength: appState.get().trailLength });
   const trailRenderer = new TrailRenderer(overlay);
@@ -83,7 +80,7 @@ import ControlPanel from '../components/ControlPanel.astro';
 
   trailRenderer.setCoordinateMapper(mapToCanvas);
   debugRenderer.setCoordinateMapper(mapToCanvas);
-  debugRenderer.setRates(60, appState.get().inferenceFps); // lightsaber interpolation
+  debugRenderer.setRates(60, appState.get().inferenceFps);
 
   const detector = new DetectorController({
     backend: { init: initDetector, reset: resetCurrentDetector },
@@ -111,24 +108,177 @@ import ControlPanel from '../components/ControlPanel.astro';
     },
   });
 
+  let refreshOverlaySizing: (() => void) | null = null;
+
   // ---- Configuration side effects ----
   appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
   appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
   appState.on('trackingMode', (mode) => void detector.switchTo(mode));
+
+  // ---- Helpers ----
+  function applySourcePresentation(): void {
+    sourceModeSelect.value = activeSource.kind;
+
+    video.classList.toggle('mirrored', activeSource.mirrored);
+    overlay.classList.toggle('mirrored', activeSource.mirrored);
+    video.classList.toggle('fit-cover', activeSource.fit === 'cover');
+    video.classList.toggle('fit-contain', activeSource.fit === 'contain');
+    video.controls = activeSource.kind === 'video';
+
+    const inCameraMode = activeSource.kind === 'camera';
+    for (const el of cameraOnlyElements) el.classList.toggle('hidden', !inCameraMode);
+    for (const el of videoOnlyElements) el.classList.toggle('hidden', inCameraMode);
+
+    updatePlaybackStatus();
+  }
+
+  function updatePlaybackStatus(): void {
+    if (activeSource.kind === 'camera') {
+      playbackStatus.textContent = 'camera';
+      return;
+    }
+
+    const dimensions =
+      video.videoWidth > 0 && video.videoHeight > 0
+        ? `${video.videoWidth}x${video.videoHeight}`
+        : '--x--';
+
+    let state = 'paused';
+    if (video.seeking) state = 'seeking';
+    else if (video.ended) state = 'ended';
+    else if (!video.paused) state = 'playing';
+
+    playbackStatus.textContent = `${dimensions} ${state}`;
+  }
+
+  function setVideoQueryParam(url: string): void {
+    const locationUrl = new URL(window.location.href);
+    if (url) locationUrl.searchParams.set('video', url);
+    else locationUrl.searchParams.delete('video');
+    history.replaceState(null, '', locationUrl.toString());
+  }
+
+  // ---- Source control ----
+  async function startCamera(): Promise<void> {
+    if (activeSource.kind !== 'camera' || activeSource.isAttached()) return;
+
+    try {
+      await activeSource.attach(video);
+      toggleCameraBtn.textContent = 'Stop Camera';
+      detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      updatePlaybackStatus();
+      mainLoop.start();
+    } catch (err) {
+      console.error('Failed to access camera:', err);
+      detectionStatus.textContent = 'Camera access denied';
+    }
+  }
+
+  function stopCamera(): void {
+    if (activeSource.kind !== 'camera' || !activeSource.isAttached()) return;
+
+    activeSource.detach();
+    toggleCameraBtn.textContent = 'Start Camera';
+    detectionStatus.textContent = detector.isReady() ? 'Ready' : 'Loading model...';
+    updatePlaybackStatus();
+  }
+
+  async function toggleCamera(): Promise<void> {
+    if (activeSource.kind !== 'camera') return;
+    if (activeSource.isAttached()) stopCamera();
+    else await startCamera();
+  }
+
+  async function loadVideoFromInput(): Promise<void> {
+    if (activeSource.kind !== 'video') {
+      await switchSource('video');
+    }
+
+    const url = videoUrlInput.value.trim();
+    if (!url) {
+      detectionStatus.textContent = 'Paste a video URL first';
+      return;
+    }
+
+    urlSource.setUrl(url);
+    detectionStatus.textContent = 'Loading video...';
+
+    try {
+      await urlSource.attach(video);
+      setVideoQueryParam(url);
+      updatePlaybackStatus();
+      detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      mainLoop.start();
+    } catch (err) {
+      console.error('Failed to load video URL:', err);
+      detectionStatus.textContent =
+        err instanceof UnsupportedVideoSourceError ? err.message : 'Failed to load video URL';
+      updatePlaybackStatus();
+    }
+  }
+
+  async function switchSource(kind: SourceKind, options: { autoLoadVideo?: boolean } = {}): Promise<void> {
+    const shouldAutoLoad = options.autoLoadVideo === true;
+    if (switchingSource) return;
+    if (activeSource.kind === kind && !shouldAutoLoad) return;
+
+    switchingSource = true;
+
+    try {
+      if (activeSource.isAttached()) {
+        activeSource.detach();
+      }
+
+      trailManager.clear();
+      mainLoop.clearDetections();
+
+      if (kind === 'camera') {
+        activeSource = cameraSource;
+        applySourcePresentation();
+        refreshOverlaySizing?.();
+        await startCamera();
+      } else {
+        activeSource = urlSource;
+        applySourcePresentation();
+        refreshOverlaySizing?.();
+        detectionStatus.textContent = 'Video mode: paste URL and click Load';
+
+        if (shouldAutoLoad) {
+          await loadVideoFromInput();
+        }
+      }
+    } finally {
+      switchingSource = false;
+    }
+  }
 
   // ---- UI events ----
   menuToggle.addEventListener('click', () => {
     controls.classList.toggle('collapsed');
   });
 
-  // Close menu when clicking outside
   document.addEventListener('click', (e) => {
     if (!controls.contains(e.target as Node) && !menuToggle.contains(e.target as Node)) {
       controls.classList.add('collapsed');
     }
   });
 
-  // Tracking mode switch (ignored while a previous switch is still loading a model)
+  sourceModeSelect.addEventListener('change', (e) => {
+    const kind = (e.target as HTMLSelectElement).value as SourceKind;
+    void switchSource(kind);
+  });
+
+  loadVideoBtn.addEventListener('click', () => {
+    void loadVideoFromInput();
+  });
+
+  videoUrlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void loadVideoFromInput();
+    }
+  });
+
   trackingModeSelect.addEventListener('change', (e) => {
     if (!detector.isSwitching()) {
       appState.update({ trackingMode: (e.target as HTMLSelectElement).value as TrackingMode });
@@ -165,61 +315,53 @@ import ControlPanel from '../components/ControlPanel.astro';
     trailManager.clear();
   });
 
-  toggleCameraBtn.addEventListener('click', () => void toggleCamera());
+  toggleCameraBtn.addEventListener('click', () => {
+    void toggleCamera();
+  });
 
-  // ---- Camera control ----
-  async function startCamera(): Promise<void> {
-    if (activeSource.isAttached()) return;
-
-    try {
-      await activeSource.attach(video);
-      toggleCameraBtn.textContent = 'Stop Camera';
-      detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
-      mainLoop.start(); // no-op if already running
-    } catch (err) {
-      console.error('Failed to access camera:', err);
-      detectionStatus.textContent = 'Camera access denied';
+  video.addEventListener('seeking', () => {
+    if (activeSource.kind === 'video') {
+      trailManager.clear();
+      mainLoop.clearDetections();
     }
+  });
+
+  const playbackEvents = ['loadedmetadata', 'play', 'pause', 'seeking', 'seeked', 'ended', 'resize'];
+  for (const eventName of playbackEvents) {
+    video.addEventListener(eventName, updatePlaybackStatus);
   }
 
-  function stopCamera(): void {
-    if (!activeSource.isAttached()) return;
+  // ---- Start ----
+  async function init() {
+    applySourcePresentation();
+    refreshOverlaySizing = installOverlaySizing(video, overlay, [trailRenderer, debugRenderer]);
 
-    activeSource.detach();
-    toggleCameraBtn.textContent = 'Start Camera';
-    detectionStatus.textContent = detector.isReady() ? 'Ready' : 'Loading model...';
-  }
+    await detector.load(appState.get().trackingMode);
 
-  async function toggleCamera(): Promise<void> {
-    if (activeSource.isAttached()) {
-      stopCamera();
+    const initialVideoUrl = new URL(window.location.href).searchParams.get('video')?.trim() ?? '';
+    if (initialVideoUrl) {
+      videoUrlInput.value = initialVideoUrl;
+      urlSource.setUrl(initialVideoUrl);
+      await switchSource('video', { autoLoadVideo: true });
     } else {
       await startCamera();
     }
   }
 
-  // ---- Start ----
-  async function init() {
-    installOverlaySizing(video, overlay, [trailRenderer, debugRenderer]);
-    await detector.load(appState.get().trackingMode);
-    await startCamera();
-  }
-
-  init();
+  void init();
 </script>
 
 <style>
-  /* Use 100dvh for dynamic viewport height - handles mobile address bar properly */
   #container {
     width: 100%;
-    height: 100vh; /* Fallback */
-    height: 100dvh; /* Modern browsers */
-    height: -webkit-fill-available; /* iOS Safari fallback */
+    height: 100vh;
+    height: 100dvh;
+    height: -webkit-fill-available;
     display: flex;
     justify-content: center;
     align-items: center;
     background: #000;
-    position: fixed; /* Use fixed to ensure full coverage */
+    position: fixed;
     top: 0;
     left: 0;
     overflow: hidden;
@@ -231,15 +373,28 @@ import ControlPanel from '../components/ControlPanel.astro';
     left: 0;
     width: 100%;
     height: 100%;
+  }
+
+  .video-element.fit-cover {
     object-fit: cover;
+  }
+
+  .video-element.fit-contain {
+    object-fit: contain;
+  }
+
+  .video-element.mirrored {
     transform: scaleX(-1);
   }
 
   .overlay-canvas {
     position: absolute;
     pointer-events: none;
-    transform: scaleX(-1);
     width: 100%;
     height: 100%;
+  }
+
+  .overlay-canvas.mirrored {
+    transform: scaleX(-1);
   }
 </style>

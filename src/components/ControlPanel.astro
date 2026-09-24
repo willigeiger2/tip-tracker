@@ -13,6 +13,27 @@
 <!-- Collapsible Controls Panel -->
 <div id="controls" class="collapsed">
   <h1>Tip Track</h1>
+
+  <div class="control-group">
+    <label for="sourceMode">Source</label>
+    <select id="sourceMode">
+      <option value="camera">Camera</option>
+      <option value="video">Video URL</option>
+    </select>
+  </div>
+
+  <div id="videoSourceGroup" class="control-group video-only hidden">
+    <label for="videoUrl">Video URL (HLS or MP4)</label>
+    <input
+      type="url"
+      id="videoUrl"
+      placeholder="https://.../manifest/video.m3u8"
+      spellcheck="false"
+      autocomplete="off"
+    />
+    <button id="loadVideo" type="button" class="btn-secondary compact-btn">Load Video</button>
+    <small class="hint">Tip: add <code>?video=&lt;url&gt;</code> to auto-load this clip.</small>
+  </div>
   
   <div class="control-group">
     <label for="trackingMode">Tracking Mode</label>
@@ -94,11 +115,12 @@
 
   <div class="control-group button-group">
     <button id="clearTrails" class="btn-secondary">Clear Trails</button>
-    <button id="toggleCamera" class="btn-primary">Start Camera</button>
+    <button id="toggleCamera" class="btn-primary camera-only">Start Camera</button>
   </div>
 
   <div class="status">
     <span id="detectionStatus">Initializing...</span>
+    <span id="playbackStatus">camera</span>
     <span id="fpsCounter">-- fps</span>
   </div>
 </div>
@@ -184,7 +206,9 @@
     color: rgba(255, 255, 255, 0.9);
   }
 
-  select, input[type="range"] {
+  select,
+  input[type="range"],
+  input[type="url"] {
     width: 100%;
     padding: 8px 10px;
     border-radius: 6px;
@@ -195,6 +219,10 @@
     font-family: inherit;
     cursor: pointer;
     transition: all 0.2s ease;
+  }
+
+  input[type="url"] {
+    cursor: text;
   }
 
   select:focus, input:focus {
@@ -279,6 +307,16 @@
     gap: 10px;
   }
 
+  .compact-btn {
+    margin-top: 8px;
+    padding: 9px;
+    font-size: 0.85rem;
+  }
+
+  .hidden {
+    display: none;
+  }
+
   button {
     width: 100%;
     padding: 12px;
@@ -316,12 +354,19 @@
 
   .status {
     display: flex;
+    gap: 10px;
     justify-content: space-between;
     margin-top: 18px;
     padding-top: 15px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.5);
+  }
+
+  #playbackStatus {
+    font-family: monospace;
+    color: rgba(255, 255, 255, 0.65);
+    white-space: nowrap;
   }
 
   #fpsCounter {

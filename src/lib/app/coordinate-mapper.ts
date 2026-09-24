@@ -7,6 +7,8 @@
 // amount. The pure functions here are unit-tested; `createCoordinateMapper` is the thin DOM wrapper
 // the renderers use.
 
+import type { FitMode } from './sources/source';
+
 export interface Size {
   width: number;
   height: number;
@@ -33,35 +35,27 @@ export interface VideoMapping {
 export const DEFAULT_VIDEO_SIZE: Size = { width: 1280, height: 720 };
 
 /**
- * Compute how a video of `video` size is scaled and cropped to fill a `container` with
- * `object-fit: cover`. Exactly one of cropX/cropY is non-zero unless aspects match.
+ * Compute how a video of `video` size is scaled into a `container` for object-fit
+ * `cover` (crop) or `contain` (letterbox). With contain, cropX/cropY are negative and
+ * represent padding in video-pixel units.
  */
-export function getVideoMapping(container: Size, video: Size): VideoMapping {
-  const videoAspect = video.width / video.height;
-  const containerAspect = container.width / container.height;
+export function getVideoMapping(container: Size, video: Size, fit: FitMode = 'cover'): VideoMapping {
+  const scaleX = container.width / video.width;
+  const scaleY = container.height / video.height;
+  const scale = fit === 'cover' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
 
-  let scale: number;
-  let cropX = 0;
-  let cropY = 0;
+  const displayedWidth = video.width * scale;
+  const displayedHeight = video.height * scale;
 
-  if (videoAspect > containerAspect) {
-    // Video is wider than the container: fills the height, cropped left/right
-    scale = container.height / video.height;
-    const displayedWidth = video.width * scale;
-    cropX = (displayedWidth - container.width) / 2 / scale;
-  } else {
-    // Video is taller (or same aspect): fills the width, cropped top/bottom
-    scale = container.width / video.width;
-    const displayedHeight = video.height * scale;
-    cropY = (displayedHeight - container.height) / 2 / scale;
-  }
+  const cropX = (displayedWidth - container.width) / 2 / scale;
+  const cropY = (displayedHeight - container.height) / 2 / scale;
 
   return {
     scale,
     cropX,
     cropY,
-    videoDisplayWidth: video.width * scale,
-    videoDisplayHeight: video.height * scale,
+    videoDisplayWidth: displayedWidth,
+    videoDisplayHeight: displayedHeight,
   };
 }
 
@@ -72,9 +66,10 @@ export function mapNormalizedToScreen(
   normX: number,
   normY: number,
   container: Size,
-  video: Size
+  video: Size,
+  fit: FitMode = 'cover'
 ): Point {
-  const { scale, cropX, cropY } = getVideoMapping(container, video);
+  const { scale, cropX, cropY } = getVideoMapping(container, video, fit);
   const videoX = normX * video.width;
   const videoY = normY * video.height;
   return {
@@ -83,8 +78,29 @@ export function mapNormalizedToScreen(
   };
 }
 
+/**
+ * Inverse mapping: screen/canvas pixel -> normalized video coordinate.
+ * Values can be outside [0, 1] when the screen point is in the letterboxed area (contain).
+ */
+export function mapScreenToNormalized(
+  screenX: number,
+  screenY: number,
+  container: Size,
+  video: Size,
+  fit: FitMode = 'cover'
+): Point {
+  const { scale, cropX, cropY } = getVideoMapping(container, video, fit);
+  const videoX = screenX / scale + cropX;
+  const videoY = screenY / scale + cropY;
+  return {
+    x: videoX / video.width,
+    y: videoY / video.height,
+  };
+}
+
 /** A function that maps normalized video coordinates to overlay-canvas pixels. */
 export type CoordinateMapper = (normX: number, normY: number) => Point;
+export type InverseCoordinateMapper = (screenX: number, screenY: number) => Point;
 
 /**
  * Current viewport size. Prefers `visualViewport`, which tracks the mobile address bar and
@@ -111,7 +127,19 @@ export function getVideoSize(video: HTMLVideoElement): Size {
  * Build a mapper bound to a video element. It re-reads viewport and video dimensions on every
  * call, so it stays correct across resizes, orientation changes and late metadata (iOS).
  */
-export function createCoordinateMapper(video: HTMLVideoElement): CoordinateMapper {
+export function createCoordinateMapper(
+  video: HTMLVideoElement,
+  getFit: () => FitMode = () => 'cover'
+): CoordinateMapper {
   return (normX, normY) =>
-    mapNormalizedToScreen(normX, normY, getViewportSize(), getVideoSize(video));
+    mapNormalizedToScreen(normX, normY, getViewportSize(), getVideoSize(video), getFit());
+}
+
+/** Build an inverse mapper bound to a video element (screen pixel -> normalized video). */
+export function createInverseCoordinateMapper(
+  video: HTMLVideoElement,
+  getFit: () => FitMode = () => 'cover'
+): InverseCoordinateMapper {
+  return (screenX, screenY) =>
+    mapScreenToNormalized(screenX, screenY, getViewportSize(), getVideoSize(video), getFit());
 }

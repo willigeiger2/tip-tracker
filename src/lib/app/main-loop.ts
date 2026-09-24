@@ -98,8 +98,10 @@ export class MainLoop {
     const sourceAttached = source.isAttached();
     const detectionInterval = detectionIntervalMs(appState.get().inferenceFps);
 
+    const sourcePlaying = source.isPlaying();
+
     if (sourceAttached && timestamp - this.lastDetectionTime >= detectionInterval) {
-      if (isDetectorReady() && source.isPlaying()) {
+      if (isDetectorReady() && sourcePlaying) {
         try {
           this.detections = await detect(video, timestamp);
           const tips = new Map(this.detections.map((d) => [d.id, d.tip]));
@@ -112,8 +114,8 @@ export class MainLoop {
       this.lastDetectionTime = timestamp;
     }
 
-    // If the source is off, fade trails gradually
-    if (!sourceAttached) {
+    // If the source is not advancing frames (camera off, paused, seeking), fade trails gradually.
+    if (!sourcePlaying) {
       trailManager.fadeAllTrails();
     }
 
@@ -151,7 +153,7 @@ export class MainLoop {
 
     // Pre-existing behavior: trails are faded again here, so they fade at twice the nominal
     // rate while the source is off. Kept for parity; see the plan backlog.
-    if (!getSource().isAttached()) {
+    if (!getSource().isPlaying()) {
       trailManager.fadeAllTrails();
     }
 
