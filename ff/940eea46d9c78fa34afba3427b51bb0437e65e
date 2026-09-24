@@ -1,0 +1,21 @@
+src/lib/app/main-loop.test.ts
+  s_05ceede2f5c8fe::t_07707999f8c992 34-35
+src/pages/index.astro
+  s_05ceede2f5c8fe::t_2050252048b6f2 25-26,31,35-36,41,67,75,84-86,88-98,108,114-117,119-122,124-127,129,131-136,138-140,142-146,148-152,154-158,160-162,164,166,168,170,177-178,185,190,193,195,201-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ff940eea46d9c78fa34afba3427b51bb0437e65e",
+  "prompts": {},
+  "sessions": {
+    "s_05ceede2f5c8fe": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f2ba3c240ffeuVnLiSGPq7uTxg",
+        "model": "@cf/zai-org/glm-5.3-flash"
+      },
+      "human_author": "willi <willi@cloudflare.com>"
+    }
+  }
+}
