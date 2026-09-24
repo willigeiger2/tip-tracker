@@ -134,6 +134,8 @@ import Layout from '../layouts/Layout.astro';
   import { EffectManager, FlashEffect } from '../lib/effects';
   import { createCoordinateMapper, getViewportSize } from '../lib/app/coordinate-mapper';
   import { createAppState, detectionIntervalMs } from '../lib/app/state';
+  import { CameraSource } from '../lib/app/sources/camera-source';
+  import type { VideoSource } from '../lib/app/sources/source';
   import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
 
   // DOM Elements
@@ -165,8 +167,11 @@ import Layout from '../layouts/Layout.astro';
   // User-facing configuration (tracking mode, debug mode, rates). UI writes, loop reads.
   const appState = createAppState();
 
+  // Video source. Camera today; step 2 adds URL/HLS playback and swaps activeSource.
+  const cameraSource = new CameraSource();
+  const activeSource: VideoSource = cameraSource;
+
   // Runtime state
-  let isCameraRunning = false;
   let isDetectorReady = false;
   let lastDetectionTime = 0;
   let frameCount = 0;
@@ -297,7 +302,7 @@ import Layout from '../layouts/Layout.astro';
         minTrackingConfidence: 0.5,
       });
       isDetectorReady = true;
-      detectionStatus.textContent = isCameraRunning ? 'Running' : 'Ready - start camera';
+      detectionStatus.textContent = activeSource.isAttached() ? 'Running' : 'Ready - start camera';
     } catch (err) {
       console.error('Failed to initialize detector:', err);
       detectionStatus.textContent = 'Model failed to load';
@@ -384,20 +389,10 @@ import Layout from '../layouts/Layout.astro';
   }
 
   async function startCamera(): Promise<void> {
-    if (isCameraRunning) return;
+    if (activeSource.isAttached()) return;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user'
-        },
-        audio: false
-      });
-      video.srcObject = stream;
-      await video.play();
-      isCameraRunning = true;
+      await activeSource.attach(video);
       toggleCameraBtn.textContent = 'Stop Camera';
       detectionStatus.textContent = isDetectorReady ? 'Running' : 'Loading model...';
 
@@ -414,20 +409,15 @@ import Layout from '../layouts/Layout.astro';
   }
 
   async function stopCamera(): Promise<void> {
-    if (!isCameraRunning) return;
+    if (!activeSource.isAttached()) return;
 
-    const stream = video.srcObject as MediaStream;
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-    }
-    video.srcObject = null;
-    isCameraRunning = false;
+    activeSource.detach();
     toggleCameraBtn.textContent = 'Start Camera';
     detectionStatus.textContent = isDetectorReady ? 'Ready' : 'Loading model...';
   }
 
   async function toggleCamera() {
-    if (isCameraRunning) {
+    if (activeSource.isAttached()) {
       await stopCamera();
     } else {
       await startCamera();
@@ -446,8 +436,9 @@ import Layout from '../layouts/Layout.astro';
 
     // Detection (throttled, only when camera is running)
     const detectionInterval = detectionIntervalMs(appState.get().inferenceFps);
-    if (isCameraRunning && timestamp - lastDetectionTime >= detectionInterval) {
-      if (isDetectorReady && video.readyState >= 2) {
+    const sourceAttached = activeSource.isAttached();
+    if (sourceAttached && timestamp - lastDetectionTime >= detectionInterval) {
+      if (isDetectorReady && activeSource.isPlaying()) {
         try {
           currentDetections = await detect(video, timestamp);
           const tips = new Map(currentDetections.map(d => [d.id, d.tip]));
@@ -476,8 +467,8 @@ import Layout from '../layouts/Layout.astro';
       lastDetectionTime = timestamp;
     }
 
-    // If camera is off, fade trails gradually
-    if (!isCameraRunning) {
+    // If the source is off, fade trails gradually
+    if (!sourceAttached) {
       trailManager.fadeAllTrails();
     }
 
@@ -488,7 +479,7 @@ import Layout from '../layouts/Layout.astro';
     const hasActiveTrails = Array.from(trailManager.getFencers().values())
       .some(f => f.trail.length > 0);
 
-    if (isCameraRunning || hasActiveTrails) {
+    if (sourceAttached || hasActiveTrails) {
       requestAnimationFrame(loop);
     }
   }
@@ -497,8 +488,8 @@ import Layout from '../layouts/Layout.astro';
     // Clear canvas (but preserve effects which draw on top)
     trailRenderer.clear();
 
-    // Continue fading trails even when camera is off
-    if (!isCameraRunning) {
+    // Continue fading trails even when the source is off
+    if (!activeSource.isAttached()) {
       trailManager.fadeAllTrails();
     }
 
