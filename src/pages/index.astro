@@ -22,20 +22,23 @@ import ControlPanel from '../components/ControlPanel.astro';
 </Layout>
 
 <script>
-  // Import modules
+  // Page bootstrap: look up DOM elements, construct the app modules, bind UI events.
+  // All behavior lives in src/lib; this file should stay wiring-only.
   import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager } from '../lib/effects';
-  import { createCoordinateMapper, getViewportSize } from '../lib/app/coordinate-mapper';
+  import { createCoordinateMapper } from '../lib/app/coordinate-mapper';
   import { createAppState } from '../lib/app/state';
   import type { RenderContext } from '../lib/app/render-modes';
   import { MainLoop } from '../lib/app/main-loop';
+  import { installOverlaySizing } from '../lib/app/overlay-sizing';
+  import { DetectorController } from '../lib/app/detector-controller';
   import { CameraSource } from '../lib/app/sources/camera-source';
   import type { VideoSource } from '../lib/app/sources/source';
   import type { DebugMode, EffectMode, TrackingMode } from '../types/fencing';
 
-  // DOM Elements
+  // ---- DOM ----
   // Unconstrained generic: in TS 6's DOM lib HTMLSelectElement is not assignable to HTMLElement
   function byId<T>(id: string): T {
     const el = document.getElementById(id);
@@ -61,6 +64,7 @@ import ControlPanel from '../components/ControlPanel.astro';
   const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
   const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
 
+  // ---- App modules ----
   // User-facing configuration (tracking mode, debug mode, rates). UI writes, loop reads.
   const appState = createAppState();
 
@@ -68,39 +72,31 @@ import ControlPanel from '../components/ControlPanel.astro';
   const cameraSource = new CameraSource();
   const activeSource: VideoSource = cameraSource;
 
-  // Runtime state
-  let isDetectorReady = false;
-  let isSwitchingMode = false;
-
-  /**
-   * Map normalized video coordinates (0-1) to overlay-canvas pixels.
-   * Accounts for object-fit: cover cropping; re-reads viewport and video size on every call.
-   */
+  // Normalized video coords -> overlay pixels (object-fit: cover aware)
   const mapToCanvas = createCoordinateMapper(video);
 
-  // Managers
   const trailManager = new TrailManager({ maxLength: appState.get().trailLength });
   const trailRenderer = new TrailRenderer(overlay);
   const debugRenderer = new DebugRenderer(overlay);
   const effectManager = new EffectManager(overlay.getContext('2d')!);
   const renderContext: RenderContext = { overlay, trailRenderer, debugRenderer, mapToCanvas };
 
-  // Set up coordinate mappers after they're created
-  function setupCoordinateMappers() {
-    trailRenderer.setCoordinateMapper(mapToCanvas);
-    debugRenderer.setCoordinateMapper(mapToCanvas);
-    // Set initial rates for lightsaber interpolation
-    debugRenderer.setRates(60, appState.get().inferenceFps);
-  }
+  trailRenderer.setCoordinateMapper(mapToCanvas);
+  debugRenderer.setCoordinateMapper(mapToCanvas);
+  debugRenderer.setRates(60, appState.get().inferenceFps); // lightsaber interpolation
 
-  // Side effects of configuration changes
-  function setupStateSubscriptions() {
-    appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
-    appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
-    appState.on('trackingMode', () => void switchTrackingMode());
-  }
+  const detector = new DetectorController({
+    backend: { init: initDetector, reset: resetCurrentDetector },
+    onStatus: (text) => {
+      detectionStatus.textContent = text;
+    },
+    isSourceAttached: () => activeSource.isAttached(),
+    onSwitchStart: () => {
+      trailManager.clear();
+      mainLoop.clearDetections();
+    },
+  });
 
-  // The rAF loop: throttled detection, trails, clash flash, rendering
   const mainLoop = new MainLoop({
     video,
     getSource: () => activeSource,
@@ -109,222 +105,106 @@ import ControlPanel from '../components/ControlPanel.astro';
     effectManager,
     renderContext,
     detect,
-    isDetectorReady: () => isDetectorReady,
+    isDetectorReady: () => detector.isReady(),
     onFps: (fps) => {
       fpsCounter.textContent = `${fps} fps`;
     },
   });
 
-  // Initialize
-  async function init() {
-    resizeAllCanvases();
+  // ---- Configuration side effects ----
+  appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
+  appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
+  appState.on('trackingMode', (mode) => void detector.switchTo(mode));
 
-    // Handle window resize
-    window.addEventListener('resize', resizeAllCanvases);
+  // ---- UI events ----
+  menuToggle.addEventListener('click', () => {
+    controls.classList.toggle('collapsed');
+  });
 
-    // Handle visual viewport changes (mobile address bar, keyboard, etc.)
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', resizeAllCanvases);
-      window.visualViewport.addEventListener('scroll', resizeAllCanvases);
+  // Close menu when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!controls.contains(e.target as Node) && !menuToggle.contains(e.target as Node)) {
+      controls.classList.add('collapsed');
     }
+  });
 
-    // Update canvas size when video metadata is loaded
-    video.addEventListener('loadedmetadata', () => {
-      // Force a resize after a short delay to ensure iOS has settled
-      resizeAllCanvases();
-      setTimeout(resizeAllCanvases, 100);
-      setTimeout(resizeAllCanvases, 500);
-    });
-
-    // Also handle when video starts playing (iOS sometimes delays dimension reporting)
-    video.addEventListener('playing', () => {
-      resizeAllCanvases();
-      setTimeout(resizeAllCanvases, 100);
-    });
-    
-    // iOS specific: resize when video dimensions change
-    video.addEventListener('resize', () => {
-      resizeAllCanvases();
-    });
-
-    // Setup coordinate mappers for renderers
-    setupCoordinateMappers();
-
-    // React to configuration changes
-    setupStateSubscriptions();
-
-    // Setup event listeners
-    setupEventListeners();
-
-    // Initialize detector with default mode (hand)
-    await initializeDetector();
-
-    // Start camera automatically
-    await startCamera();
-  }
-
-  /**
-   * Resize all canvases to match the container size
-   * The overlay canvas covers the full viewport and we handle coordinate mapping separately
-   */
-  function resizeAllCanvases() {
-    resizeOverlayCanvas();
-    trailRenderer.resize();
-    debugRenderer.resize();
-  }
-
-  /**
-   * Resize overlay canvas to match the container (viewport)
-   * The canvas fills the container and we handle cropping via coordinate transformation
-   */
-  function resizeOverlayCanvas() {
-    // visualViewport on mobile for accurate sizing (address bar, keyboard)
-    const { width: containerWidth, height: containerHeight } = getViewportSize();
-
-    overlay.width = containerWidth;
-    overlay.height = containerHeight;
-
-    // Fill the container completely
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.left = '0';
-    overlay.style.top = '0';
-
-    // Debug logging - uncomment if needed
-    // console.log('[Resize] Container:', containerWidth, 'x', containerHeight, 
-    //             'Video:', video.videoWidth, 'x', video.videoHeight);
-  }
-
-  async function initializeDetector() {
-    const { trackingMode } = appState.get();
-    detectionStatus.textContent = `Loading ${trackingMode} model...`;
-    try {
-      await initDetector(trackingMode, {
-        numTargets: trackingMode === 'pose' ? 1 : 2, // 1 person for pose, 2 for hand
-        minDetectionConfidence: 0.5,
-        minPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-      isDetectorReady = true;
-      detectionStatus.textContent = activeSource.isAttached() ? 'Running' : 'Ready - start camera';
-    } catch (err) {
-      console.error('Failed to initialize detector:', err);
-      detectionStatus.textContent = 'Model failed to load';
+  // Tracking mode switch (ignored while a previous switch is still loading a model)
+  trackingModeSelect.addEventListener('change', (e) => {
+    if (!detector.isSwitching()) {
+      appState.update({ trackingMode: (e.target as HTMLSelectElement).value as TrackingMode });
     }
-  }
+  });
 
-  /**
-   * Tear down the current detector and load the one for the newly selected tracking mode.
-   * Triggered by appState 'trackingMode' changes.
-   */
-  async function switchTrackingMode() {
-    isSwitchingMode = true;
+  debugModeSelect.addEventListener('change', (e) => {
+    appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
+  });
 
-    // Reset detector
-    isDetectorReady = false;
-    await resetCurrentDetector();
+  trailLengthInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value);
+    trailLengthValue.textContent = value.toString();
+    appState.update({ trailLength: value });
+  });
+
+  inferenceRateInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value);
+    inferenceRateValue.textContent = value.toString();
+    appState.update({ inferenceFps: value });
+  });
+
+  glowIntensityInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    glowIntensityValue.textContent = value.toFixed(1);
+    appState.update({ glowIntensity: value });
+  });
+
+  effectModeSelect.addEventListener('change', (e) => {
+    appState.update({ effectMode: (e.target as HTMLSelectElement).value as EffectMode });
+  });
+
+  clearTrailsBtn.addEventListener('click', () => {
     trailManager.clear();
-    mainLoop.clearDetections();
+  });
 
-    // Reinitialize with new mode
-    await initializeDetector();
-    isSwitchingMode = false;
-  }
+  toggleCameraBtn.addEventListener('click', () => void toggleCamera());
 
-  function setupEventListeners() {
-    // Menu toggle
-    menuToggle.addEventListener('click', () => {
-      controls.classList.toggle('collapsed');
-    });
-
-    // Close menu when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!controls.contains(e.target as Node) && !menuToggle.contains(e.target as Node)) {
-        controls.classList.add('collapsed');
-      }
-    });
-
-    // Tracking mode switch (ignored while a previous switch is still loading a model)
-    trackingModeSelect.addEventListener('change', (e) => {
-      const newMode = (e.target as HTMLSelectElement).value as TrackingMode;
-      if (!isSwitchingMode) {
-        appState.update({ trackingMode: newMode });
-      }
-    });
-
-    // Debug mode
-    debugModeSelect.addEventListener('change', (e) => {
-      appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
-    });
-
-    // Trail length
-    trailLengthInput.addEventListener('input', (e) => {
-      const value = parseInt((e.target as HTMLInputElement).value);
-      trailLengthValue.textContent = value.toString();
-      appState.update({ trailLength: value });
-    });
-
-    // Inference rate
-    inferenceRateInput.addEventListener('input', (e) => {
-      const value = parseInt((e.target as HTMLInputElement).value);
-      inferenceRateValue.textContent = value.toString();
-      appState.update({ inferenceFps: value });
-    });
-
-    // Glow intensity
-    glowIntensityInput.addEventListener('input', (e) => {
-      const value = parseFloat((e.target as HTMLInputElement).value);
-      glowIntensityValue.textContent = value.toFixed(1);
-      appState.update({ glowIntensity: value });
-    });
-
-    // Effect mode
-    effectModeSelect.addEventListener('change', (e) => {
-      appState.update({ effectMode: (e.target as HTMLSelectElement).value as EffectMode });
-    });
-
-    // Clear trails
-    clearTrailsBtn.addEventListener('click', () => {
-      trailManager.clear();
-    });
-
-    // Toggle camera
-    toggleCameraBtn.addEventListener('click', toggleCamera);
-  }
-
+  // ---- Camera control ----
   async function startCamera(): Promise<void> {
     if (activeSource.isAttached()) return;
 
     try {
       await activeSource.attach(video);
       toggleCameraBtn.textContent = 'Stop Camera';
-      detectionStatus.textContent = isDetectorReady ? 'Running' : 'Loading model...';
-
-      // Start the main loop (no-op if it is already running)
-      mainLoop.start();
+      detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      mainLoop.start(); // no-op if already running
     } catch (err) {
       console.error('Failed to access camera:', err);
       detectionStatus.textContent = 'Camera access denied';
     }
   }
 
-  async function stopCamera(): Promise<void> {
+  function stopCamera(): void {
     if (!activeSource.isAttached()) return;
 
     activeSource.detach();
     toggleCameraBtn.textContent = 'Start Camera';
-    detectionStatus.textContent = isDetectorReady ? 'Ready' : 'Loading model...';
+    detectionStatus.textContent = detector.isReady() ? 'Ready' : 'Loading model...';
   }
 
-  async function toggleCamera() {
+  async function toggleCamera(): Promise<void> {
     if (activeSource.isAttached()) {
-      await stopCamera();
+      stopCamera();
     } else {
       await startCamera();
     }
   }
 
-  // Start initialization
+  // ---- Start ----
+  async function init() {
+    installOverlaySizing(video, overlay, [trailRenderer, debugRenderer]);
+    await detector.load(appState.get().trackingMode);
+    await startCamera();
+  }
+
   init();
 </script>
 

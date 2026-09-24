@@ -31,8 +31,8 @@ class FakeSource implements VideoSource {
 }
 
 function setup(options: { detections?: DetectionResult[]; inferenceFps?: number } = {}) {
-  const pending: Array<(t: number) => void> = [];
-  const requestFrame = (cb: (t: number) => void) => { pending.push(cb); };
+  const pending: Array<(t: number) => void | Promise<void>> = [];
+  const requestFrame = (cb: (t: number) => void | Promise<void>) => { pending.push(cb); };
   /** Run every queued frame callback with the given timestamp. */
   const crank = async (timestamp: number) => {
     const cbs = pending.splice(0);
