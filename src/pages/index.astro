@@ -132,7 +132,8 @@ import Layout from '../layouts/Layout.astro';
   } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
-  import { EffectManager, FlashEffect, ExplosionEffect } from '../lib/effects';
+  import { EffectManager, FlashEffect } from '../lib/effects';
+  import { createCoordinateMapper, getViewportSize } from '../lib/app/coordinate-mapper';
   import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
 
   // DOM Elements
@@ -255,9 +256,8 @@ import Layout from '../layouts/Layout.astro';
    * The canvas fills the container and we handle cropping via coordinate transformation
    */
   function resizeOverlayCanvas() {
-    // Use visualViewport on mobile for more accurate sizing
-    const containerWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-    const containerHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    // visualViewport on mobile for accurate sizing (address bar, keyboard)
+    const { width: containerWidth, height: containerHeight } = getViewportSize();
 
     overlay.width = containerWidth;
     overlay.height = containerHeight;
@@ -274,75 +274,10 @@ import Layout from '../layouts/Layout.astro';
   }
 
   /**
-   * Get the video-to-container scaling and cropping info for object-fit: cover
-   * Returns scale factors and crop offsets to map video coordinates to screen coordinates
+   * Map normalized video coordinates (0-1) to overlay-canvas pixels.
+   * Accounts for object-fit: cover cropping; re-reads viewport and video size on every call.
    */
-  function getVideoMapping(): { 
-    scaleX: number; 
-    scaleY: number; 
-    cropX: number; 
-    cropY: number;
-    videoDisplayWidth: number;
-    videoDisplayHeight: number;
-  } {
-    // Use visualViewport on mobile for more accurate sizing
-    const containerWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-    const containerHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    
-    // Get actual video dimensions
-    const videoWidth = video.videoWidth || 1280;
-    const videoHeight = video.videoHeight || 720;
-
-    const videoAspect = videoWidth / videoHeight;
-    const containerAspect = containerWidth / containerHeight;
-
-    let scale: number;
-    let cropX = 0;
-    let cropY = 0;
-
-    if (videoAspect > containerAspect) {
-      // Video is wider than container - fills height, cropped on left/right
-      scale = containerHeight / videoHeight;
-      const displayedWidth = videoWidth * scale;
-      cropX = (displayedWidth - containerWidth) / 2 / scale; // How much video is cropped on each side in video coords
-    } else {
-      // Video is taller than container - fills width, cropped on top/bottom
-      scale = containerWidth / videoWidth;
-      const displayedHeight = videoHeight * scale;
-      cropY = (displayedHeight - containerHeight) / 2 / scale; // How much video is cropped on each side in video coords
-    }
-
-    return { 
-      scaleX: scale, 
-      scaleY: scale, 
-      cropX, 
-      cropY,
-      videoDisplayWidth: videoWidth * scale,
-      videoDisplayHeight: videoHeight * scale
-    };
-  }
-
-  /**
-   * Map normalized video coordinates (0-1) to canvas/screen coordinates
-   * Accounts for object-fit: cover cropping - only the visible portion maps to the screen
-   */
-  function mapToCanvas(normX: number, normY: number): { x: number; y: number } {
-    const { scaleX, scaleY, cropX, cropY } = getVideoMapping();
-    const containerWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-    const containerHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    const videoWidth = video.videoWidth || 1280;
-    const videoHeight = video.videoHeight || 720;
-
-    // Convert normalized to video pixel coords
-    const videoX = normX * videoWidth;
-    const videoY = normY * videoHeight;
-
-    // Map to screen coordinates (accounting for the cropped-out portions)
-    const screenX = (videoX - cropX) * scaleX;
-    const screenY = (videoY - cropY) * scaleY;
-
-    return { x: screenX, y: screenY };
-  }
+  const mapToCanvas = createCoordinateMapper(video);
 
   async function initializeDetector() {
     detectionStatus.textContent = `Loading ${trackingMode} model...`;
