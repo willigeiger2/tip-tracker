@@ -1,10 +1,13 @@
 # Tip Track - Session Resumption Document
 
 **Created**: April 24, 2026  
-**Updated**: April 26, 2026 (perspective trail width + iOS fix)  
+**Updated**: September 24, 2026 (video mode plan, step 1 foundation)  
 **Status**: Phase 1 + Hand Tracking + UI Polish + iOS Fix + Perspective ✅  
 **GitHub**: https://github.com/willi/tip-track  
-**Next Step**: CEO demo recording
+**Next Step**: Execute `VIDEO_MODE_PLAN.md` - the current step-by-step plan for video playback,
+frame jogging, recorded (keyframed) tracking and persistence. Read that first; the architecture
+described below predates the step 1 refactor (logic now lives in `src/lib/app/`, and
+`index.astro` is wiring only - see `README.md` for the current layout).
 
 ---
 

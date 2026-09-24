@@ -118,6 +118,8 @@ src/
 │   │   ├── main-loop.ts         # rAF loop lifecycle; schedules detection; dispatches render
 │   │   ├── coordinate-mapper.ts # video<->screen mapping; fit: cover|contain; mirror flag (pure)
 │   │   ├── render-modes.ts      # the debugMode switch, extracted from index.astro
+│   │   ├── overlay-sizing.ts    # overlay canvas <-> viewport sync incl. iOS delayed-resize quirks
+│   │   ├── detector-controller.ts # load/switch MediaPipe models; ready/switching flags
 │   │   └── sources/
 │   │       ├── source.ts        # VideoSource interface (attach/detach/kind/mirrored/fit/isPlaying)
 │   │       ├── camera-source.ts # getUserMedia (today's startCamera/stopCamera)
@@ -139,6 +141,7 @@ src/
 
 The bootstrap in `index.astro` should end up ~150 lines: get DOM elements, construct state +
 sources + loop, bind UI events to state changes. All behavior lives in `src/lib`.
+(Step 1 result: 186-line script, of which ~40 are DOM lookups and ~60 are one-line event bindings.)
 
 ---
 
@@ -156,28 +159,28 @@ Tasks:
 - [x] Dependencies: `astro@^7.3`, `@astrojs/cloudflare@^14.3` (vite 8; `overrides.vite` removed),
       `@mediapipe/tasks-vision@0.10.35`, `wrangler@^4.138`. Regenerate `worker-configuration.d.ts`
       (`npm run cf-typegen`). `npm audit`: 0 vulnerabilities.
-- [ ] Typecheck: add `@astrojs/check` + `typescript`; script `"check": "astro check"`. Fix every
+- [x] Typecheck: add `@astrojs/check` + `typescript`; script `"check": "astro check"`. Fix every
       reported error. Known: `src/env.d.ts` uses `Runtime<Env>` but adapter 13's `Runtime` is not
       generic (it is `{ cfContext }`); `locals.runtime.env` no longer exists in Astro 6 - bindings
       come from `import { env } from 'cloudflare:workers'`.
-- [ ] Tests: add `vitest`; script `"test": "vitest run"`. Write tests for `coordinate-mapper`
+- [x] Tests: add `vitest`; script `"test": "vitest run"`. Write tests for `coordinate-mapper`
       **before** moving the code (pin cover-fit math: wider-than-container, taller-than-container,
       equal aspect; corners map to expected screen points).
-- [ ] MediaPipe WASM parity: JS is `0.10.34/35` but WASM is loaded from jsdelivr pinned at
+- [x] MediaPipe WASM parity: JS is `0.10.34/35` but WASM is loaded from jsdelivr pinned at
       `0.10.0`. Self-host: copy `node_modules/@mediapipe/tasks-vision/wasm/*` to
       `public/mediapipe/wasm/` (postinstall or prebuild script, directory gitignored) and point
       `FilesetResolver.forVisionTasks()` at it in both detectors. Model `.task` files stay remote
       for now (large); note as backlog.
-- [ ] Refactor `index.astro` into the layout in section 5. Extract in this order, running the
+- [x] Refactor `index.astro` into the layout in section 5. Extract in this order, running the
       camera checklist mentally between each: (a) `coordinate-mapper.ts`, (b) `state.ts`,
       (c) `sources/source.ts` + `camera-source.ts`, (d) `render-modes.ts`, (e) `main-loop.ts`,
       (f) `ControlPanel.astro`. Keep names of DOM ids stable.
-- [ ] Introduce the `VideoSource` interface now, with only `CameraSource` implementing it:
+- [x] Introduce the `VideoSource` interface now, with only `CameraSource` implementing it:
       `attach(video): Promise<void>`, `detach(): void`, `kind`, `mirrored: boolean`,
       `fit: 'cover' | 'contain'`, `isPlaying(): boolean`. The main loop asks the source whether
       to run inference this frame.
-- [ ] Replace the `hasActiveTrails` loop-start heuristic with an explicit `isLoopRunning` flag.
-- [ ] README: replace the Astro starter template with a real README (what it is, modes, how to
+- [x] Replace the `hasActiveTrails` loop-start heuristic with an explicit `isLoopRunning` flag.
+- [x] README: replace the Astro starter template with a real README (what it is, modes, how to
       run, how to deploy, link to this plan). Update `TIP_TRACK_RESUME.md` to point here.
 
 Out of scope: any new UI, any behavior change, Astro/MediaPipe majors.
@@ -583,6 +586,11 @@ Storage keys:
 - Verify `npm run deploy` against the adapter's emitted `dist/client/wrangler.json` (the build is
   fully static today and deploy has likely never been run) - folded into step 7.
 - Undo/redo in the editor; zoom for precision placement.
+- Pre-existing quirks preserved by the step 1 refactor (fix deliberately, not by accident):
+  trails fade at 2x the nominal rate while the source is off (`fadeAllTrails` runs in both the
+  loop and render passes); the fps counter reports "1 fps" on the very first frame; the trail
+  renderer recomputes the video mapping per point instead of once per frame.
+- `imageService: 'passthrough'` for the Cloudflare adapter to drop the unused `/_image` endpoint.
 
 ## 10. Status log
 
@@ -591,6 +599,8 @@ Storage keys:
 | 2026-09-24 | - | Plan agreed. Baseline `1842306`. HLS: native (Chrome 142+, Safari) confirmed via caniuse; Firefox/Edge unsupported. |
 | 2026-09-24 | - | Willi confirmed: step 2 MediaPipe-on-HLS decision gate is a genuine unknown (test first); seek/step clears trails while pause fades them; step 1 is strictly behavior-preserving. |
 | 2026-09-24 | 1 | Branch `video-mode/step-1-foundation`. Deps bumped, `astro check` + vitest added, MediaPipe WASM self-hosted (was 0.10.0 WASM under 0.10.34 JS). `npm audit fix --force` moved to Astro 7 / adapter 14; kept after verifying clean (decision 1 revised). Audit: 4 -> 0 vulnerabilities. Build output is fully static (page prerendered). |
+| 2026-09-24 | 1 | Checkpoint A (deps + WASM, pre-refactor) passed in Chrome: WASM served locally, hand + pose load, trails OK. Console shows only MediaPipe's own info/warn lines (GL context, NORM_RECT), unchanged from before. |
+| 2026-09-24 | 1 | Refactor done in 7 commits (a-g): coordinate-mapper, state store, VideoSource + CameraSource, render-modes, MainLoop (explicit running flag), ControlPanel.astro, overlay-sizing + detector-controller. 35 unit tests. `index.astro` 1055 -> 245 lines. Awaiting Checkpoint B (full camera regression). |
 
 ## 11. Reference facts (verified during planning)
 
