@@ -98,6 +98,9 @@ Constraints that apply to every step:
   local notes, not in the repo.
 - The AI cannot drive a browser. Anything visual is verified by Willi via the checklist; the AI
   verifies typecheck, tests, build, and API behavior via `curl` against `astro dev`.
+- **Willi starts and stops the dev server.** The AI never launches `astro dev` (or any long-running
+  server) itself; when it needs a live server for `curl` checks it asks, states the port it
+  expects, and says when it is finished.
 
 ## 5. Target architecture (after step 1)
 
