@@ -123,13 +123,14 @@ import Layout from '../layouts/Layout.astro';
   import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
-  import { EffectManager, FlashEffect } from '../lib/effects';
+  import { EffectManager } from '../lib/effects';
   import { createCoordinateMapper, getViewportSize } from '../lib/app/coordinate-mapper';
-  import { createAppState, detectionIntervalMs } from '../lib/app/state';
-  import { renderFrame, type RenderContext } from '../lib/app/render-modes';
+  import { createAppState } from '../lib/app/state';
+  import type { RenderContext } from '../lib/app/render-modes';
+  import { MainLoop } from '../lib/app/main-loop';
   import { CameraSource } from '../lib/app/sources/camera-source';
   import type { VideoSource } from '../lib/app/sources/source';
-  import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
+  import type { DebugMode, EffectMode, TrackingMode } from '../types/fencing';
 
   // DOM Elements
   // Unconstrained generic: in TS 6's DOM lib HTMLSelectElement is not assignable to HTMLElement
@@ -166,10 +167,6 @@ import Layout from '../layouts/Layout.astro';
 
   // Runtime state
   let isDetectorReady = false;
-  let lastDetectionTime = 0;
-  let frameCount = 0;
-  let lastFpsTime = 0;
-  let currentDetections: DetectionResult[] = [];
   let isSwitchingMode = false;
 
   /**
@@ -200,10 +197,20 @@ import Layout from '../layouts/Layout.astro';
     appState.on('trackingMode', () => void switchTrackingMode());
   }
 
-  // Clash detection
-  let lastClashTime = 0;
-  const CLASH_COOLDOWN = 1000; // Minimum ms between clash effects
-  const CLASH_DISTANCE = 0.03; // Normalized distance (3% of screen) - must be very close to trigger
+  // The rAF loop: throttled detection, trails, clash flash, rendering
+  const mainLoop = new MainLoop({
+    video,
+    getSource: () => activeSource,
+    appState,
+    trailManager,
+    effectManager,
+    renderContext,
+    detect,
+    isDetectorReady: () => isDetectorReady,
+    onFps: (fps) => {
+      fpsCounter.textContent = `${fps} fps`;
+    },
+  });
 
   // Initialize
   async function init() {
@@ -314,7 +321,7 @@ import Layout from '../layouts/Layout.astro';
     isDetectorReady = false;
     await resetCurrentDetector();
     trailManager.clear();
-    currentDetections = [];
+    mainLoop.clearDetections();
 
     // Reinitialize with new mode
     await initializeDetector();
@@ -390,12 +397,8 @@ import Layout from '../layouts/Layout.astro';
       toggleCameraBtn.textContent = 'Stop Camera';
       detectionStatus.textContent = isDetectorReady ? 'Running' : 'Loading model...';
 
-      // Start the main loop if not already running
-      const hasActiveTrails = Array.from(trailManager.getFencers().values())
-        .some(f => f.trail.length > 0);
-      if (!hasActiveTrails) {
-        requestAnimationFrame(loop);
-      }
+      // Start the main loop (no-op if it is already running)
+      mainLoop.start();
     } catch (err) {
       console.error('Failed to access camera:', err);
       detectionStatus.textContent = 'Camera access denied';
@@ -416,91 +419,6 @@ import Layout from '../layouts/Layout.astro';
     } else {
       await startCamera();
     }
-  }
-
-  // Main loop
-  async function loop(timestamp: number) {
-    // Calculate FPS
-    frameCount++;
-    if (timestamp - lastFpsTime >= 1000) {
-      fpsCounter.textContent = `${frameCount} fps`;
-      frameCount = 0;
-      lastFpsTime = timestamp;
-    }
-
-    // Detection (throttled, only when camera is running)
-    const detectionInterval = detectionIntervalMs(appState.get().inferenceFps);
-    const sourceAttached = activeSource.isAttached();
-    if (sourceAttached && timestamp - lastDetectionTime >= detectionInterval) {
-      if (isDetectorReady && activeSource.isPlaying()) {
-        try {
-          currentDetections = await detect(video, timestamp);
-          const tips = new Map(currentDetections.map(d => [d.id, d.tip]));
-          trailManager.updateTips(tips, timestamp);
-
-          // Check for clash (tips close together)
-          if (currentDetections.length >= 2) {
-            const tip1 = currentDetections[0].tip;
-            const tip2 = currentDetections[1].tip;
-            const dx = tip1.x - tip2.x;
-            const dy = tip1.y - tip2.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-
-            if (distance < CLASH_DISTANCE && timestamp - lastClashTime > CLASH_COOLDOWN) {
-              // Trigger flash effect
-              effectManager.addEffect(new FlashEffect(1600));
-              lastClashTime = timestamp;
-            }
-          }
-          
-
-        } catch (err) {
-          console.error('Detection error:', err);
-        }
-      }
-      lastDetectionTime = timestamp;
-    }
-
-    // If the source is off, fade trails gradually
-    if (!sourceAttached) {
-      trailManager.fadeAllTrails();
-    }
-
-    // Rendering (60fps) - always render to show fading trails
-    render(timestamp);
-
-    // Continue loop if camera is running OR if trails are still visible
-    const hasActiveTrails = Array.from(trailManager.getFencers().values())
-      .some(f => f.trail.length > 0);
-
-    if (sourceAttached || hasActiveTrails) {
-      requestAnimationFrame(loop);
-    }
-  }
-
-  function render(timestamp: number) {
-    // Clear canvas (but preserve effects which draw on top)
-    trailRenderer.clear();
-
-    // Continue fading trails even when the source is off
-    if (!activeSource.isAttached()) {
-      trailManager.fadeAllTrails();
-    }
-
-    const { trackingMode, debugMode } = appState.get();
-
-    renderFrame(renderContext, {
-      trackingMode,
-      debugMode,
-      fencers: trailManager.getFencers(),
-      detections: currentDetections,
-    });
-
-    // Render any active effects on top
-    // Ensure valid canvas dimensions
-    const effectWidth = Math.max(1, overlay.width);
-    const effectHeight = Math.max(1, overlay.height);
-    effectManager.updateAndRender(timestamp, effectWidth, effectHeight);
   }
 
   // Start initialization
