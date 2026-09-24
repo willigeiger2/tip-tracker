@@ -14,6 +14,8 @@ export interface AppState {
   /** Trail ring-buffer length in points. */
   trailLength: number;
   glowIntensity: number;
+  /** Pose mode only: sword-tip extension as a forearm-length multiplier. */
+  poseTipExtension: number;
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -23,6 +25,7 @@ export const DEFAULT_APP_STATE: AppState = {
   inferenceFps: 15,
   trailLength: 30,
   glowIntensity: 1.0,
+  poseTipExtension: 3.0,
 };
 
 export type StateListener<T> = (state: Readonly<T>, changed: ReadonlySet<keyof T>) => void;

@@ -18,6 +18,7 @@ import ControlPanel from '../components/ControlPanel.astro';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager } from '../lib/effects';
+  import { setPoseTipExtension } from '../lib/tip-estimator';
   import { createCoordinateMapper } from '../lib/app/coordinate-mapper';
   import { createAppState } from '../lib/app/state';
   import type { RenderContext } from '../lib/app/render-modes';
@@ -51,6 +52,8 @@ import ControlPanel from '../components/ControlPanel.astro';
   const inferenceRateValue = byId<HTMLSpanElement>('inferenceRateValue');
   const glowIntensityInput = byId<HTMLInputElement>('glowIntensity');
   const glowIntensityValue = byId<HTMLSpanElement>('glowIntensityValue');
+  const poseTipExtensionInput = byId<HTMLInputElement>('poseTipExtension');
+  const poseTipExtensionValue = byId<HTMLSpanElement>('poseTipExtensionValue');
   const effectModeSelect = byId<HTMLSelectElement>('effectMode');
   const clearTrailsBtn = byId<HTMLButtonElement>('clearTrails');
   const toggleCameraBtn = byId<HTMLButtonElement>('toggleCamera');
@@ -114,6 +117,8 @@ import ControlPanel from '../components/ControlPanel.astro';
   appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
   appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
   appState.on('trackingMode', (mode) => void detector.switchTo(mode));
+  appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
+  setPoseTipExtension(appState.get().poseTipExtension);
 
   // ---- Helpers ----
   function applySourcePresentation(): void {
@@ -305,6 +310,12 @@ import ControlPanel from '../components/ControlPanel.astro';
     const value = parseFloat((e.target as HTMLInputElement).value);
     glowIntensityValue.textContent = value.toFixed(1);
     appState.update({ glowIntensity: value });
+  });
+
+  poseTipExtensionInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    poseTipExtensionValue.textContent = value.toFixed(1);
+    appState.update({ poseTipExtension: value });
   });
 
   effectModeSelect.addEventListener('change', (e) => {

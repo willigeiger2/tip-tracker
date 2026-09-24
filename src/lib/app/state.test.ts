@@ -71,6 +71,7 @@ describe('createAppState', () => {
     expect(state.debugMode).toBe('none');
     expect(state.inferenceFps).toBe(15);
     expect(state.trailLength).toBe(30);
+    expect(state.poseTipExtension).toBe(3.0);
   });
 
   it('accepts overrides', () => {
