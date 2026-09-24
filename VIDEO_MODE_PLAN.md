@@ -38,9 +38,11 @@ Validity matrix:
 
 These were agreed before planning. Change them here first if they need to change.
 
-1. **Dependencies**: minor bumps only in step 1 (astro 6.4.x, @astrojs/cloudflare 13.7.x,
-   @mediapipe/tasks-vision 0.10.35, wrangler 4.138). Majors (Astro 7, adapter 14, MediaPipe 1.0)
-   are out of scope for this plan.
+1. **Dependencies**: ~~minor bumps only~~ **Revised 2026-09-24**: Astro 7.3.x + @astrojs/cloudflare
+   14.3.x + vite 8 (the `vite: ^7` override had to go). Rationale: `npm audit` reported 4
+   advisories fixable only in Astro 7 and Astro 6 no longer receives security fixes; the upgrade
+   proved clean (check/build/dev pass, 0 vulnerabilities). MediaPipe stays on 0.10.35; MediaPipe
+   1.0 remains out of scope.
 2. **Refactor**: step 1 includes a dedicated restructuring pass of `index.astro` into modules
    *before* feature work, with unit tests pinning behavior where practical.
 3. **HLS playback**: native `<video>` HLS with feature detection. Chrome 142+ and Safari play HLS
@@ -148,9 +150,9 @@ behavior change.**
 
 Tasks:
 
-- [ ] Dependencies (minor only): `astro@^6.4`, `@astrojs/cloudflare@^13.7`,
+- [x] Dependencies: `astro@^7.3`, `@astrojs/cloudflare@^14.3` (vite 8; `overrides.vite` removed),
       `@mediapipe/tasks-vision@0.10.35`, `wrangler@^4.138`. Regenerate `worker-configuration.d.ts`
-      (`npm run cf-typegen`). Review `npm audit`.
+      (`npm run cf-typegen`). `npm audit`: 0 vulnerabilities.
 - [ ] Typecheck: add `@astrojs/check` + `typescript`; script `"check": "astro check"`. Fix every
       reported error. Known: `src/env.d.ts` uses `Runtime<Env>` but adapter 13's `Runtime` is not
       generic (it is `{ cfContext }`); `locals.runtime.env` no longer exists in Astro 6 - bindings
@@ -574,7 +576,9 @@ Storage keys:
 - "Not visible" keyframe type for explicit gaps.
 - More than two tracks / custom labels and colors.
 - Self-host MediaPipe `.task` model files.
-- Astro 7 / adapter 14 / MediaPipe 1.0 upgrade.
+- MediaPipe 1.0 upgrade (Astro 7 / adapter 14 done in step 1).
+- Verify `npm run deploy` against the adapter's emitted `dist/client/wrangler.json` (the build is
+  fully static today and deploy has likely never been run) - folded into step 7.
 - Undo/redo in the editor; zoom for precision placement.
 
 ## 10. Status log
@@ -583,6 +587,7 @@ Storage keys:
 |---|---|---|
 | 2026-09-24 | - | Plan agreed. Baseline `1842306`. HLS: native (Chrome 142+, Safari) confirmed via caniuse; Firefox/Edge unsupported. |
 | 2026-09-24 | - | Willi confirmed: step 2 MediaPipe-on-HLS decision gate is a genuine unknown (test first); seek/step clears trails while pause fades them; step 1 is strictly behavior-preserving. |
+| 2026-09-24 | 1 | Branch `video-mode/step-1-foundation`. Deps bumped, `astro check` + vitest added, MediaPipe WASM self-hosted (was 0.10.0 WASM under 0.10.34 JS). `npm audit fix --force` moved to Astro 7 / adapter 14; kept after verifying clean (decision 1 revised). Audit: 4 -> 0 vulnerabilities. Build output is fully static (page prerendered). |
 
 ## 11. Reference facts (verified during planning)
 
