@@ -6,6 +6,9 @@
 		"node": ">=22.12.0"
 	},
 	"scripts": {
+		"postinstall": "node scripts/copy-mediapipe-wasm.mjs",
+		"predev": "node scripts/copy-mediapipe-wasm.mjs",
+		"prebuild": "node scripts/copy-mediapipe-wasm.mjs",
 		"dev": "astro dev",
 		"build": "astro build",
 		"preview": "astro build && astro preview",

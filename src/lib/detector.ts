@@ -3,6 +3,7 @@
 
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import type { Pose, Landmark } from '../types/fencing';
+import { MEDIAPIPE_WASM_PATH } from './mediapipe-config';
 
 let poseLandmarker: PoseLandmarker | null = null;
 let isInitializing = false;
@@ -71,9 +72,7 @@ export async function initPoseDetector(
   isInitializing = true;
 
   try {
-    const vision = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
-    );
+    const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH);
 
     poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
