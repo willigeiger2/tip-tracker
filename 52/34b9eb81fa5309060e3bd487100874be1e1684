@@ -1,0 +1,21 @@
+src/components/ControlPanel.astro
+  s_05ceede2f5c8fe::t_f213ef43d614e2 1-350
+src/pages/index.astro
+  s_05ceede2f5c8fe::t_1775110e369154 3,20,365
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5234b9eb81fa5309060e3bd487100874be1e1684",
+  "prompts": {},
+  "sessions": {
+    "s_05ceede2f5c8fe": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f2ba3c240ffeuVnLiSGPq7uTxg",
+        "model": "@cf/zai-org/glm-5.3-flash"
+      },
+      "human_author": "willi <willi@cloudflare.com>"
+    }
+  }
+}
