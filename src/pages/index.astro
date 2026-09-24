@@ -123,7 +123,6 @@ import Layout from '../layouts/Layout.astro';
   import {
     initDetector,
     detect,
-    getTrackingMode,
     resetCurrentDetector,
     POSE_LANDMARKS,
     POSE_CONNECTIONS,
@@ -134,6 +133,7 @@ import Layout from '../layouts/Layout.astro';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager, FlashEffect } from '../lib/effects';
   import { createCoordinateMapper, getViewportSize } from '../lib/app/coordinate-mapper';
+  import { createAppState, detectionIntervalMs } from '../lib/app/state';
   import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
 
   // DOM Elements
@@ -162,23 +162,20 @@ import Layout from '../layouts/Layout.astro';
   const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
   const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
 
-  // State
+  // User-facing configuration (tracking mode, debug mode, rates). UI writes, loop reads.
+  const appState = createAppState();
+
+  // Runtime state
   let isCameraRunning = false;
   let isDetectorReady = false;
-  let trackingMode: TrackingMode = 'hand';
-  let debugMode: DebugMode = 'none';
-  let effectMode: EffectMode = 'none';
-  let inferenceFps = 15;
-  let detectionInterval = 1000 / inferenceFps;
   let lastDetectionTime = 0;
-  let lastRenderTime = 0;
   let frameCount = 0;
   let lastFpsTime = 0;
   let currentDetections: DetectionResult[] = [];
   let isSwitchingMode = false;
 
   // Managers
-  const trailManager = new TrailManager({ maxLength: 30 });
+  const trailManager = new TrailManager({ maxLength: appState.get().trailLength });
   const trailRenderer = new TrailRenderer(overlay);
   const debugRenderer = new DebugRenderer(overlay);
   const effectManager = new EffectManager(overlay.getContext('2d')!);
@@ -188,7 +185,14 @@ import Layout from '../layouts/Layout.astro';
     trailRenderer.setCoordinateMapper(mapToCanvas);
     debugRenderer.setCoordinateMapper(mapToCanvas);
     // Set initial rates for lightsaber interpolation
-    debugRenderer.setRates(60, inferenceFps);
+    debugRenderer.setRates(60, appState.get().inferenceFps);
+  }
+
+  // Side effects of configuration changes
+  function setupStateSubscriptions() {
+    appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
+    appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
+    appState.on('trackingMode', () => void switchTrackingMode());
   }
 
   // Clash detection
@@ -230,6 +234,9 @@ import Layout from '../layouts/Layout.astro';
 
     // Setup coordinate mappers for renderers
     setupCoordinateMappers();
+
+    // React to configuration changes
+    setupStateSubscriptions();
 
     // Setup event listeners
     setupEventListeners();
@@ -280,6 +287,7 @@ import Layout from '../layouts/Layout.astro';
   const mapToCanvas = createCoordinateMapper(video);
 
   async function initializeDetector() {
+    const { trackingMode } = appState.get();
     detectionStatus.textContent = `Loading ${trackingMode} model...`;
     try {
       await initDetector(trackingMode, {
@@ -296,6 +304,24 @@ import Layout from '../layouts/Layout.astro';
     }
   }
 
+  /**
+   * Tear down the current detector and load the one for the newly selected tracking mode.
+   * Triggered by appState 'trackingMode' changes.
+   */
+  async function switchTrackingMode() {
+    isSwitchingMode = true;
+
+    // Reset detector
+    isDetectorReady = false;
+    await resetCurrentDetector();
+    trailManager.clear();
+    currentDetections = [];
+
+    // Reinitialize with new mode
+    await initializeDetector();
+    isSwitchingMode = false;
+  }
+
   function setupEventListeners() {
     // Menu toggle
     menuToggle.addEventListener('click', () => {
@@ -309,61 +335,44 @@ import Layout from '../layouts/Layout.astro';
       }
     });
 
-    // Tracking mode switch
-    trackingModeSelect.addEventListener('change', async (e) => {
+    // Tracking mode switch (ignored while a previous switch is still loading a model)
+    trackingModeSelect.addEventListener('change', (e) => {
       const newMode = (e.target as HTMLSelectElement).value as TrackingMode;
-      if (newMode !== trackingMode && !isSwitchingMode) {
-        isSwitchingMode = true;
-        trackingMode = newMode;
-        
-        // Reset detector
-        isDetectorReady = false;
-        await resetCurrentDetector();
-        trailManager.clear();
-        currentDetections = [];
-        
-        // Reinitialize with new mode
-        await initializeDetector();
-        isSwitchingMode = false;
+      if (!isSwitchingMode) {
+        appState.update({ trackingMode: newMode });
       }
     });
 
     // Debug mode
     debugModeSelect.addEventListener('change', (e) => {
-      debugMode = (e.target as HTMLSelectElement).value as DebugMode;
+      appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
     });
 
     // Trail length
     trailLengthInput.addEventListener('input', (e) => {
       const value = parseInt((e.target as HTMLInputElement).value);
       trailLengthValue.textContent = value.toString();
-      trailManager.setConfig({ maxLength: value });
+      appState.update({ trailLength: value });
     });
 
     // Inference rate
     inferenceRateInput.addEventListener('input', (e) => {
       const value = parseInt((e.target as HTMLInputElement).value);
       inferenceRateValue.textContent = value.toString();
-      inferenceFps = value;
-      detectionInterval = 1000 / inferenceFps;
-      // Update debug renderer for lightsaber interpolation
-      debugRenderer.setRates(60, inferenceFps);
+      appState.update({ inferenceFps: value });
     });
 
     // Glow intensity
-    if (glowIntensityInput) {
-      glowIntensityInput.addEventListener('input', (e) => {
-        const value = parseFloat((e.target as HTMLInputElement).value);
-        glowIntensityValue.textContent = value.toFixed(1);
-      });
-    }
+    glowIntensityInput.addEventListener('input', (e) => {
+      const value = parseFloat((e.target as HTMLInputElement).value);
+      glowIntensityValue.textContent = value.toFixed(1);
+      appState.update({ glowIntensity: value });
+    });
 
     // Effect mode
-    if (effectModeSelect) {
-      effectModeSelect.addEventListener('change', (e) => {
-        effectMode = (e.target as HTMLSelectElement).value as EffectMode;
-      });
-    }
+    effectModeSelect.addEventListener('change', (e) => {
+      appState.update({ effectMode: (e.target as HTMLSelectElement).value as EffectMode });
+    });
 
     // Clear trails
     clearTrailsBtn.addEventListener('click', () => {
@@ -436,6 +445,7 @@ import Layout from '../layouts/Layout.astro';
     }
 
     // Detection (throttled, only when camera is running)
+    const detectionInterval = detectionIntervalMs(appState.get().inferenceFps);
     if (isCameraRunning && timestamp - lastDetectionTime >= detectionInterval) {
       if (isDetectorReady && video.readyState >= 2) {
         try {
@@ -479,7 +489,6 @@ import Layout from '../layouts/Layout.astro';
       .some(f => f.trail.length > 0);
 
     if (isCameraRunning || hasActiveTrails) {
-      lastRenderTime = timestamp;
       requestAnimationFrame(loop);
     }
   }
@@ -493,6 +502,7 @@ import Layout from '../layouts/Layout.astro';
       trailManager.fadeAllTrails();
     }
 
+    const { trackingMode, debugMode } = appState.get();
     const fencers = trailManager.getFencers();
 
     // Render based on debug mode
