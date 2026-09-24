@@ -1,0 +1,19 @@
+VIDEO_MODE_PLAN.md
+  s_05ceede2f5c8fe::t_8d4f20ea4853f8 121-122,144,162,166,169,174,178,182-183,589-593,602-603
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b229ba22c50e9ff860c2b704c8cd6f5d9fe8e544",
+  "prompts": {},
+  "sessions": {
+    "s_05ceede2f5c8fe": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f2ba3c240ffeuVnLiSGPq7uTxg",
+        "model": "@cf/zai-org/glm-5.3-flash"
+      },
+      "human_author": "willi <willi@cloudflare.com>"
+    }
+  }
+}
