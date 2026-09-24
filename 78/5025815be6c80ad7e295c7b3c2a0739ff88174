@@ -1,0 +1,21 @@
+src/lib/app/render-modes.ts
+  s_05ceede2f5c8fe::t_f5fbccd6ee6965 1-245
+src/pages/index.astro
+  s_05ceede2f5c8fe::t_78252ab8750875 123,129,175-180,186,491-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "785025815be6c80ad7e295c7b3c2a0739ff88174",
+  "prompts": {},
+  "sessions": {
+    "s_05ceede2f5c8fe": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f2ba3c240ffeuVnLiSGPq7uTxg",
+        "model": "@cf/zai-org/glm-5.3-flash"
+      },
+      "human_author": "willi <willi@cloudflare.com>"
+    }
+  }
+}
