@@ -582,6 +582,9 @@ Storage keys:
 - Training export: frames + labels (ffmpeg frame extraction at the stored `fps`), COCO-style JSON.
 - Cloudflare Access in front of the deployment (write protection).
 - hls.js fallback for Firefox/Edge, or Stream MP4 download URLs.
+- Normalize Stream playback URLs in step 2 (accept `watch.videodelivery.net/<uid>` and convert
+  to `https://videodelivery.net/<uid>/manifest/video.m3u8` automatically; iPhone/Safari proved
+  stricter about the direct media URL shape).
 - "Not visible" keyframe type for explicit gaps.
 - More than two tracks / custom labels and colors.
 - Self-host MediaPipe `.task` model files.
@@ -605,6 +608,7 @@ Storage keys:
 | 2026-09-24 | 1 | Checkpoint A (deps + WASM, pre-refactor) passed in Chrome: WASM served locally, hand + pose load, trails OK. Console shows only MediaPipe's own info/warn lines (GL context, NORM_RECT), unchanged from before. |
 | 2026-09-24 | 1 | Refactor done in 7 commits (a-g): coordinate-mapper, state store, VideoSource + CameraSource, render-modes, MainLoop (explicit running flag), ControlPanel.astro, overlay-sizing + detector-controller. 35 unit tests. `index.astro` 1055 -> 245 lines. Awaiting Checkpoint B (full camera regression). |
 | 2026-09-24 | 2 | New backlog item captured: after manual keyframe editing exists (step 5), add "auto-seed from pose" to generate an editable draft track. |
+| 2026-09-24 | 2 | iPhone/Safari check: direct Stream manifest URL (`https://videodelivery.net/<uid>/manifest/video.m3u8`) plays and tracks; non-manifest/player-style URL did not. Decision gate passes with canonical manifest URL. |
 
 ## 11. Reference facts (verified during planning)
 
