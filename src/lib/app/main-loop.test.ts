@@ -3,7 +3,7 @@ import { MainLoop, tipDistance, CLASH_DISTANCE } from './main-loop';
 import { createAppState } from './state';
 import { TrailManager } from '../trail-manager';
 import type { VideoSource } from './sources/source';
-import type { DetectionResult, TipPosition } from '../../types/fencing';
+import type { DetectionResult, Fencer, TipPosition } from '../../types/fencing';
 
 // The loop is driven by a hand-cranked requestAnimationFrame so each test controls time exactly.
 // Timestamps start at T0 (not 0) because, like real rAF timestamps, the first frame must be far
@@ -30,7 +30,7 @@ class FakeSource implements VideoSource {
   isPlaying(): boolean { return this.attached && this.playing; }
 }
 
-function setup(options: { detections?: DetectionResult[]; inferenceFps?: number } = {}) {
+function setup(options: { detections?: DetectionResult[]; inferenceFps?: number; recordedFrame?: { fencers: Map<string, Fencer>; detections: DetectionResult[] } | null } = {}) {
   const pending: Array<(t: number) => void | Promise<void>> = [];
   const requestFrame = (cb: (t: number) => void | Promise<void>) => { pending.push(cb); };
   /** Run every queued frame callback with the given timestamp. */
@@ -60,6 +60,7 @@ function setup(options: { detections?: DetectionResult[]; inferenceFps?: number 
       mapToCanvas: (x, y) => ({ x, y }),
     },
     detect,
+    getRecordedFrame: () => options.recordedFrame ?? null,
     isDetectorReady: () => true,
     onFps,
     renderFrame,
@@ -170,6 +171,22 @@ describe('MainLoop detection scheduling', () => {
     expect(onFps).toHaveBeenCalledTimes(2);
     expect(onFps).toHaveBeenNthCalledWith(1, 1);
     expect(onFps).toHaveBeenNthCalledWith(2, 10);
+  });
+
+  it('recorded mode bypasses detector and uses recorded frame snapshot', async () => {
+    const fencers = new Map<string, Fencer>([
+      ['A', { id: 'A', side: 'left', color: '#00ff00', tip: tip(0.2, 0.2), trail: [] }],
+      ['B', { id: 'B', side: 'right', color: '#ff0000', tip: tip(0.8, 0.2), trail: [] }],
+    ]);
+    const dets = [detection('A', 0.2, 0.2), detection('B', 0.8, 0.2)];
+    const { loop, source, appState, detect, crank } = setup({ recordedFrame: { fencers, detections: dets } });
+    appState.update({ trackingMode: 'recorded' });
+    source.attached = true;
+    source.playing = false;
+    loop.start();
+    await crank(T0);
+    expect(detect).not.toHaveBeenCalled();
+    expect(loop.getDetections()).toEqual(dets);
   });
 });
 

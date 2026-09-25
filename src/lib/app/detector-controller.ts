@@ -4,10 +4,16 @@
 
 import type { TrackingMode } from '../../types/fencing';
 
+export type InferenceTrackingMode = 'hand' | 'pose';
+
+function isInferenceTrackingMode(mode: TrackingMode): mode is InferenceTrackingMode {
+  return mode === 'hand' || mode === 'pose';
+}
+
 /** The detector operations this controller drives (matches unified-detector's exports). */
 export interface DetectorBackend {
   init(
-    mode: TrackingMode,
+    mode: InferenceTrackingMode,
     options: {
       numTargets: number;
       minDetectionConfidence: number;
@@ -31,7 +37,7 @@ export interface DetectorControllerDeps {
 export const DETECTION_CONFIDENCE = 0.5;
 
 /** Pose tracks one person; hand mode tracks up to two hands. */
-export function numTargetsFor(mode: TrackingMode): number {
+export function numTargetsFor(mode: InferenceTrackingMode): number {
   return mode === 'pose' ? 1 : 2;
 }
 
@@ -53,6 +59,13 @@ export class DetectorController {
   /** Load the model for `mode`. Status becomes "Running"/"Ready - start camera" or an error. */
   async load(mode: TrackingMode): Promise<void> {
     const { backend, onStatus, isSourceAttached } = this.deps;
+
+    if (!isInferenceTrackingMode(mode)) {
+      this.ready = true;
+      onStatus(isSourceAttached() ? 'Recorded mode' : 'Recorded mode - load video');
+      return;
+    }
+
     onStatus(`Loading ${mode} model...`);
     try {
       await backend.init(mode, {

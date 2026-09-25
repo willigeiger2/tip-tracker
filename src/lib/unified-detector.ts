@@ -21,7 +21,8 @@ import {
 import { estimateTipsForFencers } from './tip-estimator';
 
 // Current tracking mode
-let currentMode: TrackingMode = 'pose';
+export type InferenceTrackingMode = Exclude<TrackingMode, 'recorded'>;
+let currentMode: InferenceTrackingMode = 'pose';
 
 // Track initialization state
 let isInitializing = false;
@@ -30,7 +31,7 @@ let isInitializing = false;
  * Initialize the detector based on tracking mode
  */
 export async function initDetector(
-  mode: TrackingMode,
+  mode: InferenceTrackingMode,
   options: {
     numTargets?: number;
     minDetectionConfidence?: number;
@@ -153,6 +154,7 @@ export function getTrackingMode(): TrackingMode {
  * Set tracking mode (will require reinitialization)
  */
 export async function setTrackingMode(mode: TrackingMode): Promise<void> {
+  if (mode === 'recorded') return;
   if (mode !== currentMode) {
     await resetCurrentDetector();
     currentMode = mode;
@@ -213,4 +215,4 @@ export function extractTips(results: DetectionResult[]): Map<string, TipPosition
 
 // Re-export types and constants for convenience
 export { POSE_LANDMARKS, POSE_CONNECTIONS, HAND_LANDMARKS, HAND_CONNECTIONS };
-export type { TrackingMode };
+export type { InferenceTrackingMode as TrackingMode };

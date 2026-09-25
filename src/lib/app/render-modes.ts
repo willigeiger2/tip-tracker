@@ -31,6 +31,25 @@ export function renderFrame(context: RenderContext, frame: FrameData): void {
   const { overlay, trailRenderer, debugRenderer, mapToCanvas } = context;
   const { trackingMode, debugMode, fencers, detections } = frame;
 
+  if (trackingMode === 'recorded') {
+    // Recorded mode has no landmarks/skeletons; unsupported debug modes degrade to trails+tips.
+    switch (debugMode) {
+      case 'tips-only':
+        trailRenderer.renderTipDots(fencers);
+        return;
+      case 'trails-only':
+        trailRenderer.renderTrailsOnly(fencers);
+        return;
+      case 'heatmap':
+        trailRenderer.renderTrails(fencers);
+        return;
+      default:
+        trailRenderer.renderTrails(fencers);
+        trailRenderer.renderTipDots(fencers);
+        return;
+    }
+  }
+
   // Render based on debug mode
   switch (debugMode) {
     case 'none':

@@ -37,6 +37,16 @@ import Transport from '../components/Transport.astro';
   import { DetectorController } from '../lib/app/detector-controller';
   import { CameraSource } from '../lib/app/sources/camera-source';
   import { UrlSource, UnsupportedVideoSourceError } from '../lib/app/sources/url-source';
+  import { buildRecordedFrameSnapshot } from '../lib/recorded/playback';
+  import {
+    createEmptyTrackSet,
+    exportTrackSetToJson,
+    importTrackSetFromJson,
+    keyframeCount,
+    loadTrackSet,
+    saveTrackSet,
+  } from '../lib/recorded/track-store';
+  import type { RecordedTrackSet } from '../lib/recorded/types';
   import { deriveVideoId } from '../lib/recorded/video-id';
   import type { SourceKind, VideoSource } from '../lib/app/sources/source';
   import type { DebugMode, EffectMode, TrackingMode } from '../types/fencing';
@@ -56,6 +66,9 @@ import Transport from '../components/Transport.astro';
   const videoUrlInput = byId<HTMLInputElement>('videoUrl');
   const loadVideoBtn = byId<HTMLButtonElement>('loadVideo');
   const trackingModeSelect = byId<HTMLSelectElement>('trackingMode');
+  const recordedTrackingOption = trackingModeSelect.querySelector<HTMLOptionElement>(
+    'option[value="recorded"]'
+  );
   const debugModeSelect = byId<HTMLSelectElement>('debugMode');
   const trailLengthInput = byId<HTMLInputElement>('trailLength');
   const trailLengthValue = byId<HTMLSpanElement>('trailLengthValue');
@@ -71,6 +84,12 @@ import Transport from '../components/Transport.astro';
   const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
   const playbackStatus = byId<HTMLSpanElement>('playbackStatus');
   const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
+  const recordedJsonInput = byId<HTMLTextAreaElement>('recordedJsonInput');
+  const recordedImportPasteBtn = byId<HTMLButtonElement>('recordedImportPaste');
+  const recordedExportJsonBtn = byId<HTMLButtonElement>('recordedExportJson');
+  const recordedImportFileInput = byId<HTMLInputElement>('recordedImportFile');
+  const recordedImportFileBtn = byId<HTMLButtonElement>('recordedImportFileBtn');
+  const recordedStatus = byId<HTMLSpanElement>('recordedStatus');
   const transportPlayPauseBtn = byId<HTMLButtonElement>('transportPlayPause');
   const transportStepBackBtn = byId<HTMLButtonElement>('transportStepBack');
   const transportStepForwardBtn = byId<HTMLButtonElement>('transportStepForward');
@@ -122,6 +141,11 @@ import Transport from '../components/Transport.astro';
     effectManager,
     renderContext,
     detect,
+    getRecordedFrame: (mediaTime, timestamp, trailSamples) => {
+      if (appState.get().trackingMode !== 'recorded') return null;
+      if (!recordedTrackSet) return null;
+      return buildRecordedFrameSnapshot(recordedTrackSet, mediaTime, timestamp, trailSamples, 1.0);
+    },
     isDetectorReady: () => detector.isReady(),
     onFps: (fps) => {
       fpsCounter.textContent = `${fps} fps`;
@@ -130,6 +154,8 @@ import Transport from '../components/Transport.astro';
 
   let refreshOverlaySizing: (() => void) | null = null;
   let currentVideoId: string | null = null;
+  let currentVideoUrl = '';
+  let recordedTrackSet: RecordedTrackSet | null = null;
   let transportFps = DEFAULT_FRAME_RATE;
   let transportFpsApproximate = true;
   let isDraggingSeek = false;
@@ -138,7 +164,11 @@ import Transport from '../components/Transport.astro';
   // ---- Configuration side effects ----
   appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
   appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
-  appState.on('trackingMode', (mode) => void detector.switchTo(mode));
+  appState.on('trackingMode', (mode) => {
+    trackingModeSelect.value = mode;
+    void detector.switchTo(mode);
+    updateRecordedStatus();
+  });
   appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
   setPoseTipExtension(appState.get().poseTipExtension);
 
@@ -155,6 +185,9 @@ import Transport from '../components/Transport.astro';
     const inCameraMode = activeSource.kind === 'camera';
     for (const el of cameraOnlyElements) el.classList.toggle('hidden', !inCameraMode);
     for (const el of videoOnlyElements) el.classList.toggle('hidden', inCameraMode);
+
+    updateTrackingModeAvailability();
+    updateRecordedStatus();
 
     updatePlaybackStatus();
   }
@@ -185,6 +218,60 @@ import Transport from '../components/Transport.astro';
     if (url) locationUrl.searchParams.set('video', url);
     else locationUrl.searchParams.delete('video');
     history.replaceState(null, '', locationUrl.toString());
+  }
+
+  function updateTrackingModeAvailability(): void {
+    const inVideoMode = activeSource.kind === 'video';
+    if (recordedTrackingOption) {
+      recordedTrackingOption.disabled = !inVideoMode;
+    }
+
+    if (!inVideoMode && appState.get().trackingMode === 'recorded') {
+      appState.update({ trackingMode: 'hand' });
+    }
+  }
+
+  function updateRecordedStatus(customMessage?: string): void {
+    if (customMessage) {
+      recordedStatus.textContent = customMessage;
+      return;
+    }
+
+    if (activeSource.kind !== 'video') {
+      recordedStatus.textContent = 'Recorded mode is available in video source only.';
+      return;
+    }
+
+    if (!recordedTrackSet) {
+      recordedStatus.textContent = 'No recorded keyframes loaded.';
+      return;
+    }
+
+    const count = keyframeCount(recordedTrackSet);
+    recordedStatus.textContent = `${count} keyframe${count === 1 ? '' : 's'} loaded.`;
+  }
+
+  function loadOrCreateRecordedTrackSet(url: string): void {
+    const videoId = deriveVideoId(url);
+    currentVideoId = videoId;
+    currentVideoUrl = url;
+
+    const loaded = loadTrackSet(videoId, url, transportFps);
+    if (loaded) {
+      recordedTrackSet = loaded;
+    } else {
+      recordedTrackSet = createEmptyTrackSet(videoId, url, transportFps, 1.0);
+      saveTrackSet(recordedTrackSet);
+    }
+
+    recordedJsonInput.value = '';
+    updateRecordedStatus();
+  }
+
+  function persistRecordedTrackSet(): void {
+    if (!recordedTrackSet) return;
+    saveTrackSet(recordedTrackSet);
+    updateRecordedStatus();
   }
 
   function formatClock(seconds: number): string {
@@ -337,8 +424,11 @@ import Transport from '../components/Transport.astro';
       await urlSource.attach(video);
       setVideoQueryParam(url);
       await detectTransportFps(url);
+      loadOrCreateRecordedTrackSet(url);
       updatePlaybackStatus();
-      if (video.paused) {
+      if (appState.get().trackingMode === 'recorded') {
+        detectionStatus.textContent = video.paused ? 'Recorded mode - tap Play' : 'Recorded mode';
+      } else if (video.paused) {
         detectionStatus.textContent = 'Video loaded - tap Play';
       } else {
         detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
@@ -369,12 +459,17 @@ import Transport from '../components/Transport.astro';
 
       if (kind === 'camera') {
         currentVideoId = null;
+        currentVideoUrl = '';
+        recordedTrackSet = null;
         setTransportFps(DEFAULT_FRAME_RATE, true);
         activeSource = cameraSource;
         applySourcePresentation();
         refreshOverlaySizing?.();
         await startCamera();
       } else {
+        currentVideoId = null;
+        currentVideoUrl = '';
+        recordedTrackSet = null;
         activeSource = urlSource;
         applySourcePresentation();
         refreshOverlaySizing?.();
@@ -416,9 +511,88 @@ import Transport from '../components/Transport.astro';
     }
   });
 
+  recordedImportPasteBtn.addEventListener('click', () => {
+    if (!currentVideoId || !currentVideoUrl) {
+      updateRecordedStatus('Load a video first.');
+      return;
+    }
+    const text = recordedJsonInput.value.trim();
+    if (!text) {
+      updateRecordedStatus('Paste track-set JSON to import.');
+      return;
+    }
+
+    const imported = importTrackSetFromJson(text, currentVideoId, currentVideoUrl, transportFps);
+    if (!imported) {
+      updateRecordedStatus('Import failed: invalid track-set JSON.');
+      return;
+    }
+
+    imported.fps = imported.fps || transportFps;
+    recordedTrackSet = imported;
+    persistRecordedTrackSet();
+    trailManager.clear();
+    mainLoop.clearDetections();
+    updateRecordedStatus('Imported recorded track set.');
+  });
+
+  recordedImportFileBtn.addEventListener('click', () => {
+    recordedImportFileInput.click();
+  });
+
+  recordedImportFileInput.addEventListener('change', async () => {
+    if (!currentVideoId || !currentVideoUrl) {
+      updateRecordedStatus('Load a video first.');
+      recordedImportFileInput.value = '';
+      return;
+    }
+
+    const file = recordedImportFileInput.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const imported = importTrackSetFromJson(text, currentVideoId, currentVideoUrl, transportFps);
+    recordedImportFileInput.value = '';
+    if (!imported) {
+      updateRecordedStatus('Import failed: invalid file JSON.');
+      return;
+    }
+
+    imported.fps = imported.fps || transportFps;
+    recordedTrackSet = imported;
+    persistRecordedTrackSet();
+    trailManager.clear();
+    mainLoop.clearDetections();
+    updateRecordedStatus(`Imported ${file.name}.`);
+  });
+
+  recordedExportJsonBtn.addEventListener('click', () => {
+    if (!recordedTrackSet || !currentVideoId) {
+      updateRecordedStatus('Nothing to export yet.');
+      return;
+    }
+
+    const payload = exportTrackSetToJson(recordedTrackSet);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = `tiptrack-${currentVideoId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+    updateRecordedStatus('Exported recorded track set.');
+  });
+
   trackingModeSelect.addEventListener('change', (e) => {
     if (!detector.isSwitching()) {
-      appState.update({ trackingMode: (e.target as HTMLSelectElement).value as TrackingMode });
+      const mode = (e.target as HTMLSelectElement).value as TrackingMode;
+      if (mode === 'recorded' && activeSource.kind !== 'video') {
+        trackingModeSelect.value = appState.get().trackingMode;
+        return;
+      }
+      appState.update({ trackingMode: mode });
     }
   });
 
@@ -509,6 +683,10 @@ import Transport from '../components/Transport.astro';
     if (!Number.isFinite(parsed) || parsed <= 1 || parsed > 240) return;
     saveFpsOverride(currentVideoId, parsed);
     setTransportFps(parsed, false);
+    if (recordedTrackSet) {
+      recordedTrackSet.fps = parsed;
+      persistRecordedTrackSet();
+    }
   });
 
   document.addEventListener('keydown', (e) => {

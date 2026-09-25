@@ -72,8 +72,8 @@ export type EffectMode =
   | 'matrix'         // Green digital rain trail effect
   | 'motion-blur';   // Directional blur based on velocity
 
-// Tracking mode: switch between pose and hand tracking
-export type TrackingMode = 'pose' | 'hand';
+// Tracking mode: hand/pose inference or recorded keyframes.
+export type TrackingMode = 'pose' | 'hand' | 'recorded';
 
 // Unified detection result - works for both pose and hand modes
 export interface DetectionResult {

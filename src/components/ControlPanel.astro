@@ -40,8 +40,28 @@
     <select id="trackingMode">
       <option value="hand">Hand Tracking (Demo)</option>
       <option value="pose">Pose Tracking (Full Body)</option>
+      <option value="recorded">Recorded Points (Video Only)</option>
     </select>
     <small class="hint">Hand: index fingertip = sword tip</small>
+  </div>
+
+  <div id="recordedPanel" class="control-group video-only hidden">
+    <label for="recordedJsonInput">Recorded Tracks (A green, B red)</label>
+    <textarea
+      id="recordedJsonInput"
+      rows="4"
+      placeholder="Paste RecordedTrackSet JSON here"
+      spellcheck="false"
+    ></textarea>
+    <div class="recorded-actions">
+      <button id="recordedImportPaste" type="button" class="btn-secondary compact-btn">Import JSON</button>
+      <button id="recordedExportJson" type="button" class="btn-secondary compact-btn">Export JSON</button>
+    </div>
+    <div class="recorded-actions">
+      <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
+      <button id="recordedImportFileBtn" type="button" class="btn-secondary compact-btn">Import File</button>
+      <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
+    </div>
   </div>
 
   <div class="control-group">
@@ -222,7 +242,8 @@
 
   select,
   input[type="range"],
-  input[type="url"] {
+  input[type="url"],
+  textarea {
     width: 100%;
     padding: 8px 10px;
     border-radius: 6px;
@@ -236,6 +257,14 @@
   }
 
   input[type="url"] {
+    cursor: text;
+  }
+
+  textarea {
+    min-height: 76px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
     cursor: text;
   }
 
@@ -325,6 +354,19 @@
     margin-top: 8px;
     padding: 9px;
     font-size: 0.85rem;
+  }
+
+  .recorded-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .recorded-actions button {
+    width: auto;
+    flex: 1;
+    margin-top: 0;
   }
 
   .hidden {

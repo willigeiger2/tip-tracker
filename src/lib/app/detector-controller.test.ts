@@ -53,6 +53,14 @@ describe('DetectorController.load', () => {
     expect(controller.isReady()).toBe(false);
     expect(onStatus).toHaveBeenLastCalledWith('Model failed to load');
   });
+
+  it('recorded mode skips detector init and becomes ready immediately', async () => {
+    const { controller, init, onStatus } = setup({ attached: true });
+    await controller.load('recorded');
+    expect(init).not.toHaveBeenCalled();
+    expect(controller.isReady()).toBe(true);
+    expect(onStatus).toHaveBeenLastCalledWith('Recorded mode');
+  });
 });
 
 describe('DetectorController.switchTo', () => {
