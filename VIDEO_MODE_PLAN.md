@@ -585,6 +585,8 @@ Storage keys:
 - Normalize Stream playback URLs in step 2 (accept `watch.videodelivery.net/<uid>` and convert
   to `https://videodelivery.net/<uid>/manifest/video.m3u8` automatically; iPhone/Safari proved
   stricter about the direct media URL shape).
+- Transport stepping quality on sources with duplicate/near-duplicate frames or ambiguous CFR/VFR
+  metadata: consider optional "next distinct frame" stepping mode if this remains annoying.
 - "Not visible" keyframe type for explicit gaps.
 - More than two tracks / custom labels and colors.
 - Self-host MediaPipe `.task` model files.
@@ -609,6 +611,7 @@ Storage keys:
 | 2026-09-24 | 1 | Refactor done in 7 commits (a-g): coordinate-mapper, state store, VideoSource + CameraSource, render-modes, MainLoop (explicit running flag), ControlPanel.astro, overlay-sizing + detector-controller. 35 unit tests. `index.astro` 1055 -> 245 lines. Awaiting Checkpoint B (full camera regression). |
 | 2026-09-24 | 2 | New backlog item captured: after manual keyframe editing exists (step 5), add "auto-seed from pose" to generate an editable draft track. |
 | 2026-09-24 | 2 | iPhone/Safari check: direct Stream manifest URL (`https://videodelivery.net/<uid>/manifest/video.m3u8`) plays and tracks; non-manifest/player-style URL did not. Decision gate passes with canonical manifest URL. |
+| 2026-09-24 | 3 | Custom transport shipped (play/pause, ±1 frame, slider, readout, FPS detect/override, keyboard shortcuts). Back-step bug fixed (frame index floor + frame-center seek). Camera mode hides transport. Manual test acceptable: occasional jank likely source-frame duplication/CFR quirks; deferred to backlog. |
 
 ## 11. Reference facts (verified during planning)
 
