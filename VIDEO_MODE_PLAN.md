@@ -574,6 +574,9 @@ Storage keys:
 
 ## 9. Backlog (explicitly not scheduled)
 
+- Auto-seed recorded tracks from pose mode (or hand mode) as a **starting draft**,
+  then refine in the keyframe editor. Do this only after step 5 so manual edit UX is already solid.
+  Direction: one-click "Generate draft", confidence-aware sparse keyframes, then normal edit/export.
 - Compare mode: run live inference **and** recorded ground truth on the same clip, show per-frame
   error. The first real evaluation harness for a future model.
 - Training export: frames + labels (ffmpeg frame extraction at the stored `fps`), COCO-style JSON.
@@ -601,6 +604,7 @@ Storage keys:
 | 2026-09-24 | 1 | Branch `video-mode/step-1-foundation`. Deps bumped, `astro check` + vitest added, MediaPipe WASM self-hosted (was 0.10.0 WASM under 0.10.34 JS). `npm audit fix --force` moved to Astro 7 / adapter 14; kept after verifying clean (decision 1 revised). Audit: 4 -> 0 vulnerabilities. Build output is fully static (page prerendered). |
 | 2026-09-24 | 1 | Checkpoint A (deps + WASM, pre-refactor) passed in Chrome: WASM served locally, hand + pose load, trails OK. Console shows only MediaPipe's own info/warn lines (GL context, NORM_RECT), unchanged from before. |
 | 2026-09-24 | 1 | Refactor done in 7 commits (a-g): coordinate-mapper, state store, VideoSource + CameraSource, render-modes, MainLoop (explicit running flag), ControlPanel.astro, overlay-sizing + detector-controller. 35 unit tests. `index.astro` 1055 -> 245 lines. Awaiting Checkpoint B (full camera regression). |
+| 2026-09-24 | 2 | New backlog item captured: after manual keyframe editing exists (step 5), add "auto-seed from pose" to generate an editable draft track. |
 
 ## 11. Reference facts (verified during planning)
 
