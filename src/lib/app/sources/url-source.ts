@@ -57,6 +57,53 @@ async function hasCorsAccess(url: string): Promise<boolean> {
   }
 }
 
+function isNotAllowedError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: string }).name === 'NotAllowedError'
+  );
+}
+
+function isNotSupportedError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: string }).name === 'NotSupportedError'
+  );
+}
+
+async function waitForVideoLoad(video: HTMLVideoElement, timeoutMs = 10000): Promise<void> {
+  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const onLoaded = () => cleanup(resolve);
+    const onError = () => {
+      const code = video.error?.code;
+      cleanup(() =>
+        reject(new UnsupportedVideoSourceError(`Video failed to load (media error code ${code ?? 'unknown'})`))
+      );
+    };
+    const onTimeout = () =>
+      cleanup(() => reject(new UnsupportedVideoSourceError('Timed out while loading video metadata')));
+
+    const cleanup = (done: () => void) => {
+      video.removeEventListener('loadedmetadata', onLoaded);
+      video.removeEventListener('canplay', onLoaded);
+      video.removeEventListener('error', onError);
+      clearTimeout(timeoutId);
+      done();
+    };
+
+    video.addEventListener('loadedmetadata', onLoaded, { once: true });
+    video.addEventListener('canplay', onLoaded, { once: true });
+    video.addEventListener('error', onError, { once: true });
+    const timeoutId = window.setTimeout(onTimeout, timeoutMs);
+  });
+}
+
 export class UrlSource implements VideoSource {
   readonly kind = 'video' as const;
   readonly mirrored = false;
@@ -85,7 +132,6 @@ export class UrlSource implements VideoSource {
     }
 
     const isCrossOrigin = isCrossOriginUrl(this.url);
-    const corsOk = isCrossOrigin ? await hasCorsAccess(this.url) : true;
 
     this.detach();
 
@@ -94,20 +140,34 @@ export class UrlSource implements VideoSource {
     video.setAttribute('playsinline', '');
     video.srcObject = null;
     video.src = this.url;
+    video.load();
+
+    // iOS often needs metadata to land before controls and playback state are reliable.
+    await waitForVideoLoad(video);
+
+    this.video = video;
 
     try {
       await video.play();
     } catch (error) {
-      if (isCrossOrigin && !corsOk) {
-        throw new UnsupportedVideoSourceError(
-          'This video URL blocks cross-origin access (missing Access-Control-Allow-Origin). ' +
-            'Tip Track needs CORS-enabled video for inference. Use a Stream URL or enable CORS on the MP4 origin.'
-        );
+      // iOS/Safari can block autoplay despite muted playback. In that case the source is loaded;
+      // user can tap Play in native controls.
+      if (isNotAllowedError(error)) {
+        return;
       }
+
+      if (isCrossOrigin && isNotSupportedError(error)) {
+        const corsOk = await hasCorsAccess(this.url);
+        if (!corsOk) {
+          throw new UnsupportedVideoSourceError(
+            'This video URL likely blocks cross-origin access (missing Access-Control-Allow-Origin). ' +
+              'Tip Track needs CORS-enabled video for inference. Use a Stream URL or enable CORS on the MP4 origin.'
+          );
+        }
+      }
+
       throw error;
     }
-
-    this.video = video;
   }
 
   detach(): void {

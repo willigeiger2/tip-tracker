@@ -212,7 +212,11 @@ import ControlPanel from '../components/ControlPanel.astro';
       await urlSource.attach(video);
       setVideoQueryParam(url);
       updatePlaybackStatus();
-      detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      if (video.paused) {
+        detectionStatus.textContent = 'Video loaded - tap Play';
+      } else {
+        detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      }
       mainLoop.start();
     } catch (err) {
       console.error('Failed to load video URL:', err);
