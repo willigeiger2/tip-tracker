@@ -1,0 +1,105 @@
+---
+// Floating transport controls for video mode (step 3).
+// Hidden in camera mode; behavior is wired by id from index.astro.
+---
+
+<div id="transportBar" class="video-only hidden" aria-label="Video transport">
+  <button id="transportPlayPause" class="transport-btn" type="button">Play</button>
+  <button id="transportStepBack" class="transport-btn" type="button" aria-label="Previous frame">
+    -1f
+  </button>
+  <button id="transportStepForward" class="transport-btn" type="button" aria-label="Next frame">
+    +1f
+  </button>
+
+  <input id="transportSeek" type="range" min="0" max="1" step="1" value="0" />
+
+  <span id="transportReadout">0:00.0 / 0:00.0 f0</span>
+  <button id="transportFps" class="transport-fps" type="button" title="Click to override FPS">
+    ~30 fps
+  </button>
+</div>
+
+<style>
+  #transportBar {
+    position: absolute;
+    left: 50%;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: min(960px, calc(100vw - 24px));
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(5, 5, 5, 0.8);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    z-index: 900;
+  }
+
+  .transport-btn,
+  .transport-fps {
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-size: 0.8rem;
+    font-family: inherit;
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .transport-btn:hover,
+  .transport-fps:hover {
+    background: rgba(255, 255, 255, 0.14);
+  }
+
+  .transport-btn:disabled,
+  .transport-fps:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  #transportSeek {
+    flex: 1;
+    min-width: 110px;
+    margin: 0 4px;
+    cursor: pointer;
+  }
+
+  #transportReadout {
+    min-width: 170px;
+    font-size: 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: rgba(255, 255, 255, 0.9);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .transport-fps {
+    min-width: 72px;
+    text-align: center;
+  }
+
+  @media (max-width: 760px) {
+    #transportBar {
+      width: calc(100vw - 12px);
+      gap: 6px;
+      padding: 8px;
+    }
+
+    #transportReadout {
+      min-width: 120px;
+      font-size: 0.72rem;
+    }
+
+    .transport-btn,
+    .transport-fps {
+      padding: 5px 8px;
+      font-size: 0.74rem;
+    }
+  }
+</style>
