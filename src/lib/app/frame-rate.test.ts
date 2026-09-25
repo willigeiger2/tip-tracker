@@ -36,10 +36,12 @@ describe('chooseManifestFrameRate', () => {
 });
 
 describe('frame helpers', () => {
-  it('frameIndex rounds time * fps', () => {
+  it('frameIndex floors time * fps (frame-center safe)', () => {
     expect(frameIndex(1.0, 30)).toBe(30);
     expect(frameIndex(1.49 / 30, 30)).toBe(1);
-    expect(frameIndex(1.51 / 30, 30)).toBe(2);
+    expect(frameIndex(1.99 / 30, 30)).toBe(1);
+    expect(frameIndex(2.01 / 30, 30)).toBe(2);
+    expect(frameIndex((15 + 0.5) / 30, 30)).toBe(15);
   });
 
   it('seekTimeForFrame targets frame centers and clamps to duration', () => {

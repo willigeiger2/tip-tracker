@@ -126,7 +126,9 @@ export async function detectVideoFrameRate(
 
 /** The displayed frame index for media time `t` at `fps`. */
 export function frameIndex(timeSeconds: number, fps: number): number {
-  return Math.round(timeSeconds * fps);
+  if (!Number.isFinite(timeSeconds) || !Number.isFinite(fps) || fps <= 0) return 0;
+  // Use floor so seeking to frame centers ((f + 0.5) / fps) maps back to f.
+  return Math.max(0, Math.floor(timeSeconds * fps + 1e-6));
 }
 
 /** Seek target for frame `f` (center of frame interval), clamped to the media duration. */
