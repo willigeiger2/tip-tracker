@@ -1,7 +1,7 @@
 # Tip Track - Video Mode & Recorded Tracking Plan
 
 **Created**: 2026-09-24
-**Status**: Step 5 in progress (editor implementation complete; manual checklist pending)
+**Status**: Step 6 in progress (auto-seed editable draft implementation ready for manual test)
 **Baseline commit**: `1842306` (main)
 **Related docs**: `TIP_TRACK_PLAN.md` (original architecture), `TIP_TRACK_RESUME.md` (session notes)
 
@@ -439,40 +439,40 @@ Manual test checklist:
 
 ---
 
-### Step 6 - Rendering fidelity and labelling pass
+### Step 6 - Auto-seed editable track draft
 
-**Branch**: `video-mode/step-6-fidelity`
-**Goal**: Prove the end-to-end demo on real footage and fix whatever the first full labelling pass
-reveals. This is a hardening step; expect small changes across the recorded modules.
+**Branch**: `video-mode/step-6-auto-seed-editable-track`
+**Goal**: Generate a first-pass recorded track set from live hand/pose detections on video, then
+drop directly into recorded editing so the draft can be refined instead of labeled from scratch.
 
 Tasks:
 
-- [ ] Label a complete exchange (10-20 s) on the test footage, both tracks, at the chosen
-      auto-advance. Record how long it took and what was annoying in the status log.
-- [ ] Compare recorded-mode trails side by side with hand-mode trails on the same clip: width,
-      glow, fade, tip dot size should be indistinguishable. Tune the synthesized trail's sample
-      spacing / window if not.
-- [ ] Check spline behavior on fast lunges (overshoot between sparse keyframes). If overshoot is
-      visible, add a `tension` parameter (default 1.0 = Catmull-Rom) to the interpolator and
-      expose it in the panel.
-- [ ] Edge cases: seek during play; switching hand -> recorded -> hand mid-play; changing trail
-      length live; `maxGapSeconds` change re-renders immediately.
-- [ ] Performance: recorded mode holds 60 fps with two tracks and a 60-sample trail.
-- [ ] Export JSON reviewed as a plausible training-label format (includes `fps`, frame indices
-      derivable, normalized coords, video id/url).
-- [ ] Update `TIP_TRACK_RESUME.md` with a "how to demo" section.
+- [ ] Add a video-mode action to generate recorded draft tracks from current live detections
+      (hand or pose), with clear status text when insufficient samples exist.
+- [ ] Capture timed tip samples per track while video plays; store normalized coords and media
+      time so output aligns with current video and transport FPS.
+- [ ] Convert captured samples into frame-indexed keyframes suitable for `RecordedTrackSet`:
+      sorted, clamped 0-1, and at most one keyframe per frame.
+- [ ] Save the generated draft into the existing local recorded store for this `videoId` and
+      preserve import/export compatibility (schema stays version 1).
+- [ ] Switch to `trackingMode = recorded` after generation; keep editor toggle off by default so
+      playback can be verified before editing.
+- [ ] Surface a summary after generation (`A/B keyframe counts`, sampled duration, FPS basis).
+- [ ] Add focused unit tests for the conversion helper(s) (sample -> keyframe frame mapping,
+      dedupe per frame, bounds clamp, stable sort).
 
 Definition of done:
 
-- Willi can load the footage via `?video=`, switch to recorded mode, press play, and the demo
-  looks like the finished product. Anything short of that is a bug fixed in this step.
+- Starting from video + hand/pose mode, one action creates a usable recorded draft that can be
+  played immediately and then edited with the step 5 tools.
 
-Manual test checklist: the demo script itself, run in Chrome and Safari:
+Manual test checklist:
 
-- [ ] Open `?video=<url>`, select Recorded, play: two smooth neon trails follow the sword tips for
-      the whole labelled exchange; flash fires on the blade contact.
-- [ ] Pause anywhere, step back and forth: tip dot stays on the blade.
-- [ ] Switch to Hand mode on the same clip: live inference trails for comparison.
+- [ ] Load video, run in hand or pose for a short exchange, click generate draft.
+- [ ] App switches to recorded mode and renders generated trails without import/export steps.
+- [ ] Keyframe list is populated for both tracks and edits persist/reload normally.
+- [ ] Export JSON from generated draft re-imports identically.
+- [ ] Camera mode remains unaffected.
 
 ---
 
@@ -574,10 +574,8 @@ Storage keys:
 
 ## 9. Backlog (explicitly not scheduled)
 
-- Auto-seed recorded tracks from pose mode (or hand mode) as a **starting draft**,
-  then refine in the keyframe editor. Do this only after step 5 so manual edit UX is already solid.
-  Direction: one-click "Generate draft" and/or direct mode switch to Recorded using the latest
-  captured live points, confidence-aware sparse keyframes, then normal edit/export.
+- Auto-seed follow-ups after step 6 baseline: confidence-aware thinning, "append vs replace"
+  generation modes, and one-click "generate only active track".
 - Compare mode: run live inference **and** recorded ground truth on the same clip, show per-frame
   error. The first real evaluation harness for a future model.
 - Training export: frames + labels (ffmpeg frame extraction at the stored `fps`), COCO-style JSON.
@@ -591,6 +589,8 @@ Storage keys:
 - Intermittent video playback freeze in video/recorded workflows: `NotSupportedError: The element has
   no supported sources` can appear after extended editing/scrubbing; Play auto-reload and manual
   "Load Video" recover, but root cause is unresolved.
+- Configurable left/right track mapping (e.g. red-left footage) plus improved identity stability in
+  live hand/pose tracking for two-fencer bouts.
 - "Not visible" keyframe type for explicit gaps.
 - More than two tracks / custom labels and colors.
 - Self-host MediaPipe `.task` model files.
@@ -619,6 +619,8 @@ Storage keys:
 | 2026-09-24 | 4 | Recorded mode shipped with JSON import/export, localStorage persistence, interpolation playback snapshots, and recorded-only panel visibility. Export filename now derives from the current video URL; schema no longer stores `videoName`. |
 | 2026-09-25 | 5 | Editor implementation landed on `video-mode/step-5-keyframe-editor`: edit toggle, active-track selection, auto-advance persistence, click/add-replace, drag markers, delete/clear, onion-skin markers + connector, keyframe list jump/delete, `[`/`]` nav, debounced autosave status. `npm run check`, `npm test`, and `npm run build` pass; manual checklist pending. |
 | 2026-09-26 | 5 | Editor/transport/render polish: live scrub preview, timeline-first editor (drag disabled), keyframe prev/next transport buttons + extra hotkeys, auto-advance frame-step consistency fix, interpolated current-frame marker, and trail rendering perf/fidelity tuning (no-blur default, optional stylized effects, longer recorded trail window). Intermittent `NotSupportedError` playback freeze still appears occasionally; mitigation auto-reloads source on Play failure, root cause deferred to backlog. |
+| 2026-09-26 | 6 | Step 6 scope updated to auto-seed editable recorded drafts (branch `video-mode/step-6-auto-seed-editable-track`) before broader fidelity hardening. |
+| 2026-09-26 | 6 | Implemented first auto-seed draft flow: capture live hand/pose tips while playing video, generate frame-deduped keyframes per track, save to recorded store, and switch directly to recorded mode for refinement. Added conversion helper tests (sort/clamp/dedupe). `npm run check`, `npm test`, and `npm run build` pass; manual browser checklist pending. |
 
 ## 11. Reference facts (verified during planning)
 

@@ -25,7 +25,7 @@ export const DEFAULT_APP_STATE: AppState = {
   inferenceFps: 15,
   trailLength: 30,
   glowIntensity: 1.0,
-  poseTipExtension: 3.0,
+  poseTipExtension: 4.2,
 };
 
 export type StateListener<T> = (state: Readonly<T>, changed: ReadonlySet<keyof T>) => void;

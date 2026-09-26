@@ -10,8 +10,8 @@ function makeLandmark(x: number, y: number, visibility = 1): Landmark {
 function makePose(): Pose {
   const landmarks = Array.from({ length: 33 }, () => makeLandmark(0, 0, 0));
   landmarks[LANDMARKS.RIGHT_ELBOW] = makeLandmark(0.5, 0.5, 1);
-  landmarks[LANDMARKS.RIGHT_WRIST] = makeLandmark(0.6, 0.5, 1);
-  landmarks[LANDMARKS.RIGHT_SHOULDER] = makeLandmark(0.4, 0.5, 1);
+  landmarks[LANDMARKS.RIGHT_WRIST] = makeLandmark(0.56, 0.5, 1);
+  landmarks[LANDMARKS.RIGHT_SHOULDER] = makeLandmark(0.44, 0.5, 1);
   return {
     landmarks,
     worldLandmarks: landmarks,
@@ -21,20 +21,28 @@ function makePose(): Pose {
 
 describe('pose tip extension multiplier', () => {
   beforeEach(() => {
-    setPoseTipExtension(3.0);
+    setPoseTipExtension(4.2);
   });
 
-  it('uses 3.0 by default', () => {
+  it('uses 4.2 by default', () => {
     const tip = estimateTip(makePose(), 1000, 'right');
     expect(tip).not.toBeNull();
-    expect(tip!.x).toBeCloseTo(0.9, 6);
+    expect(tip!.x).toBeCloseTo(0.812, 6);
   });
 
   it('moves the estimated tip farther when increased', () => {
     setPoseTipExtension(5.0);
     const tip = estimateTip(makePose(), 1000, 'right');
     expect(tip).not.toBeNull();
-    expect(tip!.x).toBeCloseTo(1.1, 6);
+    expect(tip!.x).toBeCloseTo(0.86, 6);
+  });
+
+  it('clamps estimated tip to frame bounds', () => {
+    setPoseTipExtension(8.0);
+    const tip = estimateTip(makePose(), 1000, 'right');
+    expect(tip).not.toBeNull();
+    expect(tip!.x).toBeLessThanOrEqual(1);
+    expect(tip!.x).toBeGreaterThanOrEqual(0);
   });
 
   it('clamps the multiplier to a safe range', () => {

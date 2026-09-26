@@ -43,6 +43,12 @@
       <option value="recorded">Recorded Points (Video Only)</option>
     </select>
     <small class="hint">Hand: index fingertip = sword tip. Clash flash is hand mode only.</small>
+    <button id="recordedGenerateDraft" type="button" class="btn-secondary compact-btn video-only hidden">
+      Generate Recorded Draft
+    </button>
+    <small id="recordedGenerateHint" class="hint video-only hidden">
+      Capture live hand/pose tips while playing, then generate editable recorded keyframes.
+    </small>
   </div>
 
   <div id="recordedPanel" class="control-group video-only hidden">
@@ -57,11 +63,9 @@
       <button id="recordedImportPaste" type="button" class="btn-secondary compact-btn">Import JSON</button>
       <button id="recordedExportJson" type="button" class="btn-secondary compact-btn">Export JSON</button>
     </div>
-    <div class="recorded-actions">
-      <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
-      <button id="recordedImportFileBtn" type="button" class="btn-secondary compact-btn">Import File</button>
-      <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
-    </div>
+    <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
+    <small class="hint">Tip: leave the JSON box empty and click Import JSON to pick a file.</small>
+    <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
 
     <div class="recorded-editor">
       <label class="inline-toggle">
@@ -172,14 +176,14 @@
     </div>
     <div class="control-group">
       <label for="poseTipExtension">
-        Pose Tip Extension: <span id="poseTipExtensionValue">3.0</span>x
+        Pose Tip Extension: <span id="poseTipExtensionValue">4.2</span>x
       </label>
       <input
         type="range"
         id="poseTipExtension"
         min="1"
         max="8"
-        value="3"
+        value="4.2"
         step="0.1"
       />
       <small class="hint">Pose mode only. Higher values push the tip farther past the wrist.</small>

@@ -4,12 +4,16 @@
 import type { Landmark, TipPosition, TipEstimator, Pose } from '../types/fencing';
 import { LANDMARKS } from './detector';
 
-// Default extension multiplier (3x forearm length for longer sword tip)
-const DEFAULT_EXTENSION = 3.0;
+// Default extension multiplier tuned for current fencing footage.
+const DEFAULT_EXTENSION = 4.2;
 let poseTipExtension = DEFAULT_EXTENSION;
 
 // Minimum confidence threshold for landmarks
 const MIN_CONFIDENCE = 0.5;
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
 /**
  * Default tip estimator: extends forearm vector by multiplier
@@ -44,8 +48,8 @@ export const defaultEstimator: TipEstimator = (
   const extension = forearmLength * poseTipExtension;
   
   return {
-    x: wrist.x + dirX * extension,
-    y: wrist.y + dirY * extension,
+    x: clamp01(wrist.x + dirX * extension),
+    y: clamp01(wrist.y + dirY * extension),
     confidence: Math.min(wrist.visibility, elbow.visibility),
   };
 };
@@ -84,8 +88,8 @@ export const perspectiveEstimator: TipEstimator = (
   const extension = forearmLength * adjustedExtension;
   
   return {
-    x: wrist.x + dirX * extension,
-    y: wrist.y + dirY * extension,
+    x: clamp01(wrist.x + dirX * extension),
+    y: clamp01(wrist.y + dirY * extension),
     confidence: Math.min(wrist.visibility, elbow.visibility, shoulder.visibility),
   };
 };

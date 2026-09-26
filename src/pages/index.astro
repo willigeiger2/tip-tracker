@@ -31,7 +31,7 @@ import Transport from '../components/Transport.astro';
   } from '../lib/app/frame-rate';
   import { createCoordinateMapper, createInverseCoordinateMapper } from '../lib/app/coordinate-mapper';
   import { createAppState } from '../lib/app/state';
-  import type { RenderContext } from '../lib/app/render-modes';
+  import type { FrameData, RenderContext } from '../lib/app/render-modes';
   import { MainLoop } from '../lib/app/main-loop';
   import { installOverlaySizing } from '../lib/app/overlay-sizing';
   import { DetectorController } from '../lib/app/detector-controller';
@@ -48,6 +48,7 @@ import Transport from '../components/Transport.astro';
     saveTrackSet,
   } from '../lib/recorded/track-store';
   import type { RecordedTrackSet } from '../lib/recorded/types';
+  import { keyframesFromLiveSamples, type LiveTipSample } from '../lib/recorded/auto-seed';
   import {
     deleteKeyframeAtFrame,
     keyframeAtFrame,
@@ -98,8 +99,9 @@ import Transport from '../components/Transport.astro';
   const recordedImportPasteBtn = byId<HTMLButtonElement>('recordedImportPaste');
   const recordedExportJsonBtn = byId<HTMLButtonElement>('recordedExportJson');
   const recordedImportFileInput = byId<HTMLInputElement>('recordedImportFile');
-  const recordedImportFileBtn = byId<HTMLButtonElement>('recordedImportFileBtn');
   const recordedStatus = byId<HTMLSpanElement>('recordedStatus');
+  const recordedGenerateDraftBtn = byId<HTMLButtonElement>('recordedGenerateDraft');
+  const recordedGenerateHint = byId<HTMLSpanElement>('recordedGenerateHint');
   const recordedEditToggle = byId<HTMLInputElement>('recordedEditToggle');
   const recordedEditorControls = byId<HTMLDivElement>('recordedEditorControls');
   const recordedActiveTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
@@ -175,7 +177,9 @@ import Transport from '../components/Transport.astro';
         trailWindowSeconds
       );
     },
-    onAfterRender: ({ overlay: overlayCanvas, trailRenderer: overlayTrailRenderer }, _frame, _timestamp) => {
+    onAfterRender: ({ overlay: overlayCanvas, trailRenderer: overlayTrailRenderer }, frame, _timestamp) => {
+      captureAutoSeedSamples(frame);
+
       if (!isRecordedEditorActive()) return;
       overlayTrailRenderer.clear();
       drawRecordedEditorOverlay(overlayCanvas);
@@ -195,6 +199,8 @@ import Transport from '../components/Transport.astro';
   let recordedAutoAdvanceFrames = 2;
   let recordedSaveTimer: number | null = null;
   let recordedStatusNote: string | null = null;
+  let autoSeedSamples: Record<'A' | 'B', LiveTipSample[]> = { A: [], B: [] };
+  let lastAutoSeedTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
   let transportFps = DEFAULT_FRAME_RATE;
   let transportFpsApproximate = true;
   let isDraggingSeek = false;
@@ -204,6 +210,8 @@ import Transport from '../components/Transport.astro';
 
   const RECORDED_AUTOSAVE_MS = 500;
   const RECORDED_AUTO_ADVANCE_STORAGE_KEY = 'tiptrack:v1:editor:auto-advance';
+  const AUTO_SEED_BASE_HINT =
+    'Capture live hand/pose tips while playing, then generate editable recorded keyframes.';
   const storedAutoAdvance = Number.parseInt(
     localStorage.getItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY) ?? '2',
     10
@@ -246,6 +254,7 @@ import Transport from '../components/Transport.astro';
     updateTrackingModeAvailability();
     updateRecordedPanelVisibility();
     updateRecordedStatus();
+    updateAutoSeedUi();
 
     updatePlaybackStatus();
   }
@@ -305,6 +314,44 @@ import Transport from '../components/Transport.astro';
     }
   }
 
+  function autoSeedSampleCount(): number {
+    return autoSeedSamples.A.length + autoSeedSamples.B.length;
+  }
+
+  function updateAutoSeedUi(): void {
+    const inVideoMode = activeSource.kind === 'video';
+    const liveTrackingMode = inVideoMode && appState.get().trackingMode !== 'recorded';
+    const sampleCount = autoSeedSampleCount();
+
+    recordedGenerateDraftBtn.classList.toggle('hidden', !liveTrackingMode);
+    recordedGenerateHint.classList.toggle('hidden', !liveTrackingMode);
+    recordedGenerateDraftBtn.disabled = !liveTrackingMode || !currentVideoId || sampleCount === 0;
+    recordedGenerateDraftBtn.textContent = 'Generate Recorded Draft';
+
+    if (!liveTrackingMode) {
+      recordedGenerateHint.textContent = AUTO_SEED_BASE_HINT;
+      return;
+    }
+
+    if (sampleCount === 0) {
+      recordedGenerateHint.textContent = 'Play video in Hand or Pose mode to capture draft samples.';
+      return;
+    }
+
+    const a = autoSeedSamples.A.length;
+    const b = autoSeedSamples.B.length;
+
+    recordedGenerateHint.textContent =
+      `Captured ${sampleCount} live sample${sampleCount === 1 ? '' : 's'} (A ${a}, B ${b}). ` +
+      'Generate a recorded draft when ready.';
+  }
+
+  function resetAutoSeedCapture(): void {
+    autoSeedSamples = { A: [], B: [] };
+    lastAutoSeedTimestampByTrack = { A: null, B: null };
+    updateAutoSeedUi();
+  }
+
   function updateRecordedPanelVisibility(): void {
     const show = activeSource.kind === 'video' && appState.get().trackingMode === 'recorded';
     recordedPanel.classList.toggle('hidden', !show);
@@ -312,12 +359,13 @@ import Transport from '../components/Transport.astro';
     recordedJsonInput.disabled = !show;
     recordedImportPasteBtn.disabled = !show;
     recordedExportJsonBtn.disabled = !show;
-    recordedImportFileBtn.disabled = !show;
+    recordedImportFileInput.disabled = !show;
     recordedEditToggle.disabled = !show;
 
     updateRecordedEditorControlsVisibility();
 
     updateEditOverlayInteractivity();
+    updateAutoSeedUi();
   }
 
   function updateRecordedEditorControlsVisibility(): void {
@@ -374,10 +422,17 @@ import Transport from '../components/Transport.astro';
     return appState.get().trackingMode === 'recorded' ? getRecordedFps() : transportFps;
   }
 
+  function autoSeedFpsBasis(): number {
+    // If this video already has a recorded set, keep generating drafts at that fps so playback,
+    // frame math, and trail window behavior stay consistent across manual/auto iterations.
+    return recordedTrackSet?.fps || transportFps;
+  }
+
   function loadOrCreateRecordedTrackSet(url: string): void {
     const videoId = deriveVideoId(url);
     currentVideoId = videoId;
     currentVideoUrl = url;
+    resetAutoSeedCapture();
 
     const loaded = loadTrackSet(videoId, url, transportFps);
     if (loaded) {
@@ -425,6 +480,131 @@ import Transport from '../components/Transport.astro';
       updateRecordedStatus();
       recordedSaveTimer = null;
     }, RECORDED_AUTOSAVE_MS);
+  }
+
+  function captureAutoSeedSamples(frame: FrameData): void {
+    if (activeSource.kind !== 'video') return;
+    if (frame.trackingMode === 'recorded') return;
+    if (!activeSource.isPlaying()) return;
+    if (frame.detections.length === 0) return;
+
+    const mediaTime = video.currentTime;
+    if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
+
+    let capturedAny = false;
+
+    for (const det of frame.detections) {
+      const id: 'A' | 'B' = det.side === 'right' ? 'B' : 'A';
+      const ts = Number.isFinite(det.tip.timestamp) ? det.tip.timestamp : Number.NaN;
+      if (!Number.isFinite(ts)) continue;
+      if (lastAutoSeedTimestampByTrack[id] !== null && ts <= lastAutoSeedTimestampByTrack[id] + 1e-6) {
+        continue;
+      }
+      lastAutoSeedTimestampByTrack[id] = ts;
+
+      autoSeedSamples[id].push({
+        time: mediaTime,
+        x: det.tip.x,
+        y: det.tip.y,
+      });
+      capturedAny = true;
+    }
+
+    if (capturedAny) {
+      updateAutoSeedUi();
+    }
+  }
+
+  function generateRecordedDraftFromLive(): void {
+    if (activeSource.kind !== 'video') return;
+    if (appState.get().trackingMode === 'recorded') {
+      detectionStatus.textContent = 'Switch to Hand or Pose mode to capture a new draft.';
+      return;
+    }
+    if (!currentVideoId || !currentVideoUrl) {
+      detectionStatus.textContent = 'Load a video first.';
+      return;
+    }
+
+    let totalSamples = autoSeedSampleCount();
+    if (totalSamples === 0) {
+      const mediaTime = video.currentTime;
+      const currentDetections = mainLoop.getDetections();
+      if (Number.isFinite(mediaTime) && mediaTime >= 0 && currentDetections.length > 0) {
+        for (const det of currentDetections) {
+          const id: 'A' | 'B' = det.side === 'right' ? 'B' : 'A';
+          autoSeedSamples[id].push({
+            time: mediaTime,
+            x: det.tip.x,
+            y: det.tip.y,
+          });
+        }
+        totalSamples = autoSeedSampleCount();
+      }
+    }
+
+    if (totalSamples === 0) {
+      detectionStatus.textContent = 'No live samples captured yet. Play in Hand or Pose mode first.';
+      return;
+    }
+
+    const fps = autoSeedFpsBasis();
+    const aKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, fps);
+    const bKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, fps);
+
+    if (aKeyframes.length === 0 && bKeyframes.length === 0) {
+      detectionStatus.textContent = 'Captured samples were not usable as keyframes.';
+      return;
+    }
+
+    const existingKeyframes = recordedTrackSet ? keyframeCount(recordedTrackSet) : 0;
+    if (existingKeyframes > 0) {
+      const replace = window.confirm(
+        `Replace existing recorded keyframes (${existingKeyframes}) with generated draft ` +
+          `(A ${aKeyframes.length}, B ${bKeyframes.length})?`
+      );
+      if (!replace) return;
+    }
+
+    const base = recordedTrackSet ?? createEmptyTrackSet(currentVideoId, currentVideoUrl, fps, 1.0);
+    recordedTrackSet = {
+      ...base,
+      videoId: currentVideoId,
+      videoUrl: currentVideoUrl,
+      fps,
+      tracks: base.tracks.map((track) => {
+        if (track.id === 'A') return { ...track, keyframes: aKeyframes };
+        if (track.id === 'B') return { ...track, keyframes: bKeyframes };
+        return track;
+      }),
+    };
+
+    recordedStatusNote = `Auto-seeded draft: A ${aKeyframes.length}, B ${bKeyframes.length}.`;
+    recordedEditMode = false;
+    recordedEditToggle.checked = false;
+    updateRecordedEditorControlsVisibility();
+    updateEditOverlayInteractivity();
+    persistRecordedTrackSet();
+    renderRecordedKeyframeList();
+    updateRecordedStatus();
+    trailManager.clear();
+    mainLoop.clearDetections();
+
+    appState.update({ trackingMode: 'recorded' });
+
+    const minTime = Math.min(
+      ...(aKeyframes[0] ? [aKeyframes[0].time] : []),
+      ...(bKeyframes[0] ? [bKeyframes[0].time] : [])
+    );
+    const maxTime = Math.max(
+      ...(aKeyframes.length > 0 ? [aKeyframes[aKeyframes.length - 1].time] : []),
+      ...(bKeyframes.length > 0 ? [bKeyframes[bKeyframes.length - 1].time] : [])
+    );
+    const sampledDuration =
+      Number.isFinite(minTime) && Number.isFinite(maxTime) ? Math.max(0, maxTime - minTime) : 0;
+    detectionStatus.textContent =
+      `Generated draft: A ${aKeyframes.length}, B ${bKeyframes.length} keyframes` +
+      ` (${sampledDuration.toFixed(1)}s @ ${fps.toFixed(2)}fps)`;
   }
 
   function formatClock(seconds: number): string {
@@ -944,6 +1124,7 @@ import Transport from '../components/Transport.astro';
       if (kind === 'camera') {
         currentVideoId = null;
         currentVideoUrl = '';
+        resetAutoSeedCapture();
         recordedTrackSet = null;
         recordedStatusNote = null;
         recordedEditMode = false;
@@ -957,6 +1138,7 @@ import Transport from '../components/Transport.astro';
       } else {
         currentVideoId = null;
         currentVideoUrl = '';
+        resetAutoSeedCapture();
         recordedTrackSet = null;
         recordedStatusNote = null;
         recordedEditMode = false;
@@ -999,6 +1181,10 @@ import Transport from '../components/Transport.astro';
     void loadVideoFromInput();
   });
 
+  recordedGenerateDraftBtn.addEventListener('click', () => {
+    generateRecordedDraftFromLive();
+  });
+
   videoUrlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -1011,9 +1197,10 @@ import Transport from '../components/Transport.astro';
       updateRecordedStatus('Load a video first.');
       return;
     }
+
     const text = recordedJsonInput.value.trim();
     if (!text) {
-      updateRecordedStatus('Paste track-set JSON to import.');
+      recordedImportFileInput.click();
       return;
     }
 
@@ -1033,10 +1220,6 @@ import Transport from '../components/Transport.astro';
     trailManager.clear();
     mainLoop.clearDetections();
     updateRecordedStatus('Imported recorded track set.');
-  });
-
-  recordedImportFileBtn.addEventListener('click', () => {
-    recordedImportFileInput.click();
   });
 
   recordedImportFileInput.addEventListener('change', async () => {
