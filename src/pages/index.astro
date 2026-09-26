@@ -248,7 +248,7 @@ import Transport from '../components/Transport.astro';
     }
 
     const count = keyframeCount(recordedTrackSet);
-    recordedStatus.textContent = `${count} keyframe${count === 1 ? '' : 's'} loaded.`;
+    recordedStatus.textContent = `${count} keyframe${count === 1 ? '' : 's'} loaded for playback.`;
   }
 
   function loadOrCreateRecordedTrackSet(url: string): void {
@@ -258,7 +258,10 @@ import Transport from '../components/Transport.astro';
 
     const loaded = loadTrackSet(videoId, url, transportFps);
     if (loaded) {
+      loaded.videoId = videoId;
+      loaded.videoUrl = url;
       recordedTrackSet = loaded;
+      saveTrackSet(recordedTrackSet);
     } else {
       recordedTrackSet = createEmptyTrackSet(videoId, url, transportFps, 1.0);
       saveTrackSet(recordedTrackSet);
@@ -528,6 +531,8 @@ import Transport from '../components/Transport.astro';
       return;
     }
 
+    imported.videoId = currentVideoId;
+    imported.videoUrl = currentVideoUrl;
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     persistRecordedTrackSet();
@@ -558,6 +563,8 @@ import Transport from '../components/Transport.astro';
       return;
     }
 
+    imported.videoId = currentVideoId;
+    imported.videoUrl = currentVideoUrl;
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     persistRecordedTrackSet();
