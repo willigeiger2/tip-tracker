@@ -85,6 +85,7 @@ import Transport from '../components/Transport.astro';
   const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
   const playbackStatus = byId<HTMLSpanElement>('playbackStatus');
   const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
+  const recordedPanel = byId<HTMLDivElement>('recordedPanel');
   const recordedJsonInput = byId<HTMLTextAreaElement>('recordedJsonInput');
   const recordedImportPasteBtn = byId<HTMLButtonElement>('recordedImportPaste');
   const recordedExportJsonBtn = byId<HTMLButtonElement>('recordedExportJson');
@@ -168,6 +169,7 @@ import Transport from '../components/Transport.astro';
   appState.on('trackingMode', (mode) => {
     trackingModeSelect.value = mode;
     void detector.switchTo(mode);
+    updateRecordedPanelVisibility();
     updateRecordedStatus();
   });
   appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
@@ -188,6 +190,7 @@ import Transport from '../components/Transport.astro';
     for (const el of videoOnlyElements) el.classList.toggle('hidden', inCameraMode);
 
     updateTrackingModeAvailability();
+    updateRecordedPanelVisibility();
     updateRecordedStatus();
 
     updatePlaybackStatus();
@@ -230,6 +233,16 @@ import Transport from '../components/Transport.astro';
     if (!inVideoMode && appState.get().trackingMode === 'recorded') {
       appState.update({ trackingMode: 'hand' });
     }
+  }
+
+  function updateRecordedPanelVisibility(): void {
+    const show = activeSource.kind === 'video' && appState.get().trackingMode === 'recorded';
+    recordedPanel.classList.toggle('hidden', !show);
+
+    recordedJsonInput.disabled = !show;
+    recordedImportPasteBtn.disabled = !show;
+    recordedExportJsonBtn.disabled = !show;
+    recordedImportFileBtn.disabled = !show;
   }
 
   function updateRecordedStatus(customMessage?: string): void {
