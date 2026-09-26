@@ -29,7 +29,7 @@ import Transport from '../components/Transport.astro';
     saveFpsOverride,
     seekTimeForFrame,
   } from '../lib/app/frame-rate';
-  import { createCoordinateMapper } from '../lib/app/coordinate-mapper';
+  import { createCoordinateMapper, createInverseCoordinateMapper } from '../lib/app/coordinate-mapper';
   import { createAppState } from '../lib/app/state';
   import type { RenderContext } from '../lib/app/render-modes';
   import { MainLoop } from '../lib/app/main-loop';
@@ -38,6 +38,7 @@ import Transport from '../components/Transport.astro';
   import { CameraSource } from '../lib/app/sources/camera-source';
   import { UrlSource, UnsupportedVideoSourceError } from '../lib/app/sources/url-source';
   import { buildRecordedFrameSnapshot } from '../lib/recorded/playback';
+  import { sampleTrackAt } from '../lib/recorded/interpolator';
   import {
     createEmptyTrackSet,
     exportTrackSetToJson,
@@ -47,6 +48,13 @@ import Transport from '../components/Transport.astro';
     saveTrackSet,
   } from '../lib/recorded/track-store';
   import type { RecordedTrackSet } from '../lib/recorded/types';
+  import {
+    deleteKeyframeAtFrame,
+    keyframeAtFrame,
+    listKeyframesWithFrames,
+    nearestNeighborFrames,
+    upsertKeyframeAtFrame,
+  } from '../lib/recorded/keyframes';
   import { deriveVideoId } from '../lib/recorded/video-id';
   import type { SourceKind, VideoSource } from '../lib/app/sources/source';
   import type { DebugMode, EffectMode, TrackingMode } from '../types/fencing';
@@ -58,6 +66,7 @@ import Transport from '../components/Transport.astro';
   }
 
   // ---- DOM ----
+  const container = byId<HTMLDivElement>('container');
   const video = byId<HTMLVideoElement>('video');
   const overlay = byId<HTMLCanvasElement>('overlay');
   const menuToggle = byId<HTMLButtonElement>('menuToggle');
@@ -91,9 +100,18 @@ import Transport from '../components/Transport.astro';
   const recordedImportFileInput = byId<HTMLInputElement>('recordedImportFile');
   const recordedImportFileBtn = byId<HTMLButtonElement>('recordedImportFileBtn');
   const recordedStatus = byId<HTMLSpanElement>('recordedStatus');
+  const recordedEditToggle = byId<HTMLInputElement>('recordedEditToggle');
+  const recordedEditorControls = byId<HTMLDivElement>('recordedEditorControls');
+  const recordedActiveTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
+  const recordedAutoAdvanceSelect = byId<HTMLSelectElement>('recordedAutoAdvance');
+  const recordedDeleteFrameBtn = byId<HTMLButtonElement>('recordedDeleteFrame');
+  const recordedClearTrackBtn = byId<HTMLButtonElement>('recordedClearTrack');
+  const recordedKeyframeList = byId<HTMLDivElement>('recordedKeyframeList');
   const transportPlayPauseBtn = byId<HTMLButtonElement>('transportPlayPause');
   const transportStepBackBtn = byId<HTMLButtonElement>('transportStepBack');
   const transportStepForwardBtn = byId<HTMLButtonElement>('transportStepForward');
+  const transportPrevKeyframeBtn = byId<HTMLButtonElement>('transportPrevKeyframe');
+  const transportNextKeyframeBtn = byId<HTMLButtonElement>('transportNextKeyframe');
   const transportSeek = byId<HTMLInputElement>('transportSeek');
   const transportReadout = byId<HTMLSpanElement>('transportReadout');
   const transportFpsBtn = byId<HTMLButtonElement>('transportFps');
@@ -111,6 +129,7 @@ import Transport from '../components/Transport.astro';
 
   // Mapper tracks activeSource.fit dynamically (camera: cover, URL video: contain).
   const mapToCanvas = createCoordinateMapper(video, () => activeSource.fit);
+  const mapToNormalized = createInverseCoordinateMapper(video, () => activeSource.fit);
 
   const trailManager = new TrailManager({ maxLength: appState.get().trailLength });
   const trailRenderer = new TrailRenderer(overlay);
@@ -119,6 +138,8 @@ import Transport from '../components/Transport.astro';
   const renderContext: RenderContext = { overlay, trailRenderer, debugRenderer, mapToCanvas };
 
   trailRenderer.setCoordinateMapper(mapToCanvas);
+  trailRenderer.setGlowIntensity(appState.get().glowIntensity);
+  trailRenderer.setEffectMode(appState.get().effectMode);
   debugRenderer.setCoordinateMapper(mapToCanvas);
   debugRenderer.setRates(60, appState.get().inferenceFps);
 
@@ -145,7 +166,19 @@ import Transport from '../components/Transport.astro';
     getRecordedFrame: (mediaTime, timestamp, trailSamples) => {
       if (appState.get().trackingMode !== 'recorded') return null;
       if (!recordedTrackSet) return null;
-      return buildRecordedFrameSnapshot(recordedTrackSet, mediaTime, timestamp, trailSamples, 1.0);
+      const trailWindowSeconds = Math.max(0.25, trailSamples / Math.max(1, recordedTrackSet.fps));
+      return buildRecordedFrameSnapshot(
+        recordedTrackSet,
+        mediaTime,
+        timestamp,
+        trailSamples,
+        trailWindowSeconds
+      );
+    },
+    onAfterRender: ({ overlay: overlayCanvas, trailRenderer: overlayTrailRenderer }, _frame, _timestamp) => {
+      if (!isRecordedEditorActive()) return;
+      overlayTrailRenderer.clear();
+      drawRecordedEditorOverlay(overlayCanvas);
     },
     isDetectorReady: () => detector.isReady(),
     onFps: (fps) => {
@@ -157,18 +190,40 @@ import Transport from '../components/Transport.astro';
   let currentVideoId: string | null = null;
   let currentVideoUrl = '';
   let recordedTrackSet: RecordedTrackSet | null = null;
+  let recordedActiveTrack: 'A' | 'B' = 'A';
+  let recordedEditMode = false;
+  let recordedAutoAdvanceFrames = 2;
+  let recordedSaveTimer: number | null = null;
+  let recordedStatusNote: string | null = null;
   let transportFps = DEFAULT_FRAME_RATE;
   let transportFpsApproximate = true;
   let isDraggingSeek = false;
   let seekDragFrame = 0;
+  let scrubPreviewRaf: number | null = null;
+  let scrubPreviewFrame = 0;
+
+  const RECORDED_AUTOSAVE_MS = 500;
+  const RECORDED_AUTO_ADVANCE_STORAGE_KEY = 'tiptrack:v1:editor:auto-advance';
+  const storedAutoAdvance = Number.parseInt(
+    localStorage.getItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY) ?? '2',
+    10
+  );
+  if ([0, 1, 2, 5, 10].includes(storedAutoAdvance)) {
+    recordedAutoAdvanceFrames = storedAutoAdvance;
+  }
+  recordedAutoAdvanceSelect.value = String(recordedAutoAdvanceFrames);
+  recordedActiveTrackSelect.value = recordedActiveTrack;
 
   // ---- Configuration side effects ----
   appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
   appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
+  appState.on('glowIntensity', (value) => trailRenderer.setGlowIntensity(value));
+  appState.on('effectMode', (value) => trailRenderer.setEffectMode(value));
   appState.on('trackingMode', (mode) => {
     trackingModeSelect.value = mode;
     void detector.switchTo(mode);
     updateRecordedPanelVisibility();
+    renderRecordedKeyframeList();
     updateRecordedStatus();
   });
   appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
@@ -258,6 +313,36 @@ import Transport from '../components/Transport.astro';
     recordedImportPasteBtn.disabled = !show;
     recordedExportJsonBtn.disabled = !show;
     recordedImportFileBtn.disabled = !show;
+    recordedEditToggle.disabled = !show;
+
+    updateRecordedEditorControlsVisibility();
+
+    updateEditOverlayInteractivity();
+  }
+
+  function updateRecordedEditorControlsVisibility(): void {
+    const panelVisible = activeSource.kind === 'video' && appState.get().trackingMode === 'recorded';
+    const controlsVisible = panelVisible && recordedEditMode;
+    recordedEditorControls.classList.toggle('hidden', !controlsVisible);
+
+    recordedActiveTrackSelect.disabled = !controlsVisible;
+    recordedAutoAdvanceSelect.disabled = !controlsVisible;
+    recordedDeleteFrameBtn.disabled = !controlsVisible;
+    recordedClearTrackBtn.disabled = !controlsVisible;
+  }
+
+  function isRecordedEditorActive(): boolean {
+    return (
+      activeSource.kind === 'video' &&
+      appState.get().trackingMode === 'recorded' &&
+      recordedEditMode &&
+      recordedTrackSet !== null
+    );
+  }
+
+  function updateEditOverlayInteractivity(): void {
+    const active = isRecordedEditorActive();
+    overlay.classList.toggle('edit-mode', active);
   }
 
   function updateRecordedStatus(customMessage?: string): void {
@@ -277,7 +362,16 @@ import Transport from '../components/Transport.astro';
     }
 
     const count = keyframeCount(recordedTrackSet);
-    recordedStatus.textContent = `${count} keyframe${count === 1 ? '' : 's'} loaded for playback.`;
+    const base = `${count} keyframe${count === 1 ? '' : 's'} loaded for playback.`;
+    recordedStatus.textContent = recordedStatusNote ? `${base} ${recordedStatusNote}` : base;
+  }
+
+  function getRecordedFps(): number {
+    return recordedTrackSet?.fps || transportFps;
+  }
+
+  function transportFrameRate(): number {
+    return appState.get().trackingMode === 'recorded' ? getRecordedFps() : transportFps;
   }
 
   function loadOrCreateRecordedTrackSet(url: string): void {
@@ -296,6 +390,11 @@ import Transport from '../components/Transport.astro';
       saveTrackSet(recordedTrackSet);
     }
 
+    recordedStatusNote = null;
+    recordedActiveTrack = 'A';
+    recordedActiveTrackSelect.value = 'A';
+    renderRecordedKeyframeList();
+
     recordedJsonInput.value = '';
     updateRecordedStatus();
   }
@@ -303,7 +402,29 @@ import Transport from '../components/Transport.astro';
   function persistRecordedTrackSet(): void {
     if (!recordedTrackSet) return;
     saveTrackSet(recordedTrackSet);
+  }
+
+  function scheduleRecordedAutosave(): void {
+    if (!recordedTrackSet) return;
+
+    recordedStatusNote = 'Unsaved changes...';
     updateRecordedStatus();
+
+    if (recordedSaveTimer !== null) {
+      window.clearTimeout(recordedSaveTimer);
+    }
+
+    recordedSaveTimer = window.setTimeout(() => {
+      persistRecordedTrackSet();
+      const stamp = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      recordedStatusNote = `Saved ${stamp}`;
+      updateRecordedStatus();
+      recordedSaveTimer = null;
+    }, RECORDED_AUTOSAVE_MS);
   }
 
   function formatClock(seconds: number): string {
@@ -321,10 +442,11 @@ import Transport from '../components/Transport.astro';
 
   function updateTransportUi(): void {
     const inVideoMode = activeSource.kind === 'video';
+    const uiFps = transportFrameRate();
     const hasDuration = Number.isFinite(video.duration) && video.duration > 0;
     const duration = hasDuration ? video.duration : 0;
-    const currentFrame = frameIndex(video.currentTime, transportFps);
-    const maxFrame = Math.max(0, frameIndex(duration, transportFps));
+    const currentFrame = frameIndex(video.currentTime, uiFps);
+    const maxFrame = Math.max(0, frameIndex(duration, uiFps));
 
     transportSeek.min = '0';
     transportSeek.max = String(Math.max(1, maxFrame));
@@ -335,7 +457,7 @@ import Transport from '../components/Transport.astro';
 
     const displayedFrame = isDraggingSeek ? seekDragFrame : currentFrame;
     const displayedTime = isDraggingSeek
-      ? seekTimeForFrame(seekDragFrame, transportFps, duration)
+      ? seekTimeForFrame(seekDragFrame, uiFps, duration)
       : video.currentTime;
 
     transportReadout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  f${displayedFrame}`;
@@ -348,7 +470,56 @@ import Transport from '../components/Transport.astro';
     transportStepBackBtn.disabled = disabled;
     transportStepForwardBtn.disabled = disabled;
 
+    const activeTrack = getRecordedTrack(recordedActiveTrack);
+    const hasRecordedTrackData =
+      appState.get().trackingMode === 'recorded' && !!activeTrack && activeTrack.keyframes.length > 0;
+    transportPrevKeyframeBtn.disabled = disabled || !hasRecordedTrackData;
+    transportNextKeyframeBtn.disabled = disabled || !hasRecordedTrackData;
+
     updateTransportFpsBadge();
+  }
+
+  async function tryPlayVideo(): Promise<void> {
+    if (activeSource.kind !== 'video') return;
+    const hasSource = Boolean(video.currentSrc || video.src);
+    if (!hasSource) {
+      detectionStatus.textContent = 'Load a video URL first.';
+      return;
+    }
+
+    if (video.ended && Number.isFinite(video.duration) && video.duration > 0) {
+      const resumeTime = Math.max(0, video.duration - 1 / Math.max(1, transportFps));
+      video.currentTime = resumeTime;
+    }
+
+    try {
+      await video.play();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorName =
+        typeof err === 'object' && err !== null && 'name' in err
+          ? String((err as { name?: unknown }).name ?? '')
+          : '';
+
+      if (errorName === 'NotSupportedError' && currentVideoUrl) {
+        detectionStatus.textContent = 'Video source got stuck, reloading...';
+        try {
+          urlSource.setUrl(currentVideoUrl);
+          await urlSource.attach(video);
+          detectionStatus.textContent = video.paused ? 'Video reloaded - tap Play' : 'Video reloaded';
+          return;
+        } catch (reloadErr) {
+          console.error('Video reload after NotSupportedError failed:', reloadErr);
+        }
+      }
+
+      console.error('Video play failed:', err);
+      if (message.includes('no supported sources') || message.includes('not supported')) {
+        detectionStatus.textContent = 'Video cannot play this source. Reload the URL.';
+      } else {
+        detectionStatus.textContent = `Playback failed: ${message}`;
+      }
+    }
   }
 
   function setTransportFps(fps: number, approximate: boolean): void {
@@ -377,14 +548,16 @@ import Transport from '../components/Transport.astro';
 
   function commitSeek(frame: number): void {
     if (activeSource.kind !== 'video') return;
+    const uiFps = transportFrameRate();
     const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    video.currentTime = seekTimeForFrame(frame, transportFps, duration);
+    video.currentTime = seekTimeForFrame(frame, uiFps, duration);
   }
 
   function stepFrames(deltaFrames: number): void {
     if (activeSource.kind !== 'video') return;
+    const uiFps = transportFrameRate();
     video.pause();
-    const nextFrame = frameIndex(video.currentTime, transportFps) + deltaFrames;
+    const nextFrame = frameIndex(video.currentTime, uiFps) + deltaFrames;
     commitSeek(nextFrame);
   }
 
@@ -395,16 +568,285 @@ import Transport from '../components/Transport.astro';
     video.currentTime = next;
   }
 
+  function scheduleScrubPreview(frame: number): void {
+    if (activeSource.kind !== 'video') return;
+
+    scrubPreviewFrame = frame;
+    if (scrubPreviewRaf !== null) return;
+
+    scrubPreviewRaf = window.requestAnimationFrame(() => {
+      scrubPreviewRaf = null;
+      video.pause();
+      commitSeek(scrubPreviewFrame);
+      updateTransportUi();
+    });
+  }
+
+  function flushScrubPreview(frame: number): void {
+    if (scrubPreviewRaf !== null) {
+      window.cancelAnimationFrame(scrubPreviewRaf);
+      scrubPreviewRaf = null;
+    }
+    video.pause();
+    commitSeek(frame);
+  }
+
   function shouldIgnoreTransportShortcut(target: EventTarget | null): boolean {
     if (!(target instanceof Element)) return false;
-    const tag = target.tagName;
-    return (
-      tag === 'INPUT' ||
-      tag === 'SELECT' ||
-      tag === 'TEXTAREA' ||
-      tag === 'BUTTON' ||
-      target.getAttribute('contenteditable') === 'true'
+    if (target instanceof HTMLTextAreaElement) return true;
+    if (target instanceof HTMLSelectElement) return true;
+    if (target instanceof HTMLInputElement) {
+      const type = target.type.toLowerCase();
+      return type !== 'range' && type !== 'button' && type !== 'checkbox' && type !== 'radio';
+    }
+    return target.getAttribute('contenteditable') === 'true';
+  }
+
+  function getRecordedTrack(trackId: 'A' | 'B') {
+    return recordedTrackSet?.tracks.find((track) => track.id === trackId) ?? null;
+  }
+
+  function replaceRecordedTrack(trackId: 'A' | 'B', nextTrack: NonNullable<ReturnType<typeof getRecordedTrack>>): void {
+    if (!recordedTrackSet) return;
+    recordedTrackSet.tracks = recordedTrackSet.tracks.map((track) =>
+      track.id === trackId ? nextTrack : track
     );
+  }
+
+  function currentRecordedFrame(): number {
+    return frameIndex(video.currentTime, getRecordedFps());
+  }
+
+  function seekToRecordedFrame(frame: number): void {
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    video.currentTime = seekTimeForFrame(frame, getRecordedFps(), duration);
+  }
+
+  function stepRecordedFrames(delta: number): void {
+    video.pause();
+    seekToRecordedFrame(currentRecordedFrame() + delta);
+  }
+
+  function renderRecordedKeyframeList(): void {
+    recordedKeyframeList.innerHTML = '';
+
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) {
+      recordedKeyframeList.innerHTML = '<div class="hint">No active track.</div>';
+      updateTransportUi();
+      return;
+    }
+
+    const rows = listKeyframesWithFrames(track, getRecordedFps());
+    if (rows.length === 0) {
+      recordedKeyframeList.innerHTML = '<div class="hint">No keyframes yet.</div>';
+      updateTransportUi();
+      return;
+    }
+
+    for (const row of rows) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'recorded-keyframe-row';
+
+      const jump = document.createElement('button');
+      jump.type = 'button';
+      jump.className = 'recorded-keyframe-jump';
+      jump.dataset.frame = String(row.frame);
+      jump.textContent = `f${row.frame}  ${formatClock(row.time)}`;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'recorded-keyframe-delete';
+      del.dataset.frame = String(row.frame);
+      del.textContent = 'Del';
+
+      rowEl.appendChild(jump);
+      rowEl.appendChild(del);
+      recordedKeyframeList.appendChild(rowEl);
+    }
+
+    updateTransportUi();
+  }
+
+  function upsertActiveTrackKeyframe(x: number, y: number): void {
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return;
+
+    const nextTrack = upsertKeyframeAtFrame(
+      track,
+      currentRecordedFrame(),
+      x,
+      y,
+      getRecordedFps()
+    );
+    replaceRecordedTrack(recordedActiveTrack, nextTrack);
+    renderRecordedKeyframeList();
+    scheduleRecordedAutosave();
+  }
+
+  function deleteActiveTrackKeyframeAtCurrentFrame(): boolean {
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return false;
+
+    const frame = currentRecordedFrame();
+    const existing = keyframeAtFrame(track, frame, getRecordedFps());
+    if (!existing) return false;
+
+    const nextTrack = deleteKeyframeAtFrame(track, frame, getRecordedFps());
+    replaceRecordedTrack(recordedActiveTrack, nextTrack);
+    renderRecordedKeyframeList();
+    scheduleRecordedAutosave();
+    return true;
+  }
+
+  function jumpNeighborKeyframe(direction: -1 | 1): void {
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return;
+    const neighbors = nearestNeighborFrames(track, currentRecordedFrame(), getRecordedFps());
+    const target = direction < 0 ? neighbors.previous : neighbors.next;
+    if (!target) return;
+    video.pause();
+    seekToRecordedFrame(target.frame);
+  }
+
+  function drawDiamond(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.lineTo(x, y + size);
+    ctx.lineTo(x - size, y);
+    ctx.closePath();
+  }
+
+  function drawRecordedEditorOverlay(overlayCanvas: HTMLCanvasElement): void {
+    if (!isRecordedEditorActive() || !recordedTrackSet) return;
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const frame = currentRecordedFrame();
+    const fps = getRecordedFps();
+
+    const activeTrack = getRecordedTrack(recordedActiveTrack);
+    if (activeTrack) {
+      const activeNeighbors = nearestNeighborFrames(activeTrack, frame, fps);
+      const start = activeNeighbors.previous ?? activeNeighbors.current;
+      const end = activeNeighbors.next ?? activeNeighbors.current;
+      if (start && end && end.time > start.time) {
+        const points: Array<{ x: number; y: number }> = [];
+        const steps = 24;
+        for (let i = 0; i <= steps; i++) {
+          const t = start.time + ((end.time - start.time) * i) / steps;
+          const sample = sampleTrackAt(activeTrack, t, {
+            fps,
+            maxGapSeconds: recordedTrackSet.maxGapSeconds,
+          });
+          if (!sample) continue;
+          points.push(mapToCanvas(sample.x, sample.y));
+        }
+
+        if (points.length >= 2) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+      } else if (activeNeighbors.previous && activeNeighbors.next) {
+        const p = mapToCanvas(activeNeighbors.previous.x, activeNeighbors.previous.y);
+        const n = mapToCanvas(activeNeighbors.next.x, activeNeighbors.next.y);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(n.x, n.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (!activeNeighbors.current) {
+        const interpolated = sampleTrackAt(activeTrack, video.currentTime, {
+          fps,
+          maxGapSeconds: recordedTrackSet.maxGapSeconds,
+        });
+        if (interpolated) {
+          const point = mapToCanvas(interpolated.x, interpolated.y);
+          ctx.save();
+          ctx.fillStyle = activeTrack.color;
+          ctx.globalAlpha = 0.9;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
+    (['A', 'B'] as const).forEach((trackId) => {
+      const track = getRecordedTrack(trackId);
+      if (!track) return;
+
+      const neighbors = nearestNeighborFrames(track, frame, fps);
+      const items = [
+        { kind: 'previous' as const, keyframe: neighbors.previous },
+        { kind: 'next' as const, keyframe: neighbors.next },
+        { kind: 'current' as const, keyframe: neighbors.current },
+      ];
+
+      for (const item of items) {
+        if (!item.keyframe) continue;
+        const pos = mapToCanvas(item.keyframe.x, item.keyframe.y);
+        const isActiveTrack = trackId === recordedActiveTrack;
+        const alpha = isActiveTrack
+          ? item.kind === 'current'
+            ? 0.95
+            : item.kind === 'previous'
+              ? 0.72
+              : 0.56
+          : 0.35;
+        const size = item.kind === 'current' ? 7 : 5;
+
+        ctx.save();
+        ctx.fillStyle = track.color;
+        ctx.globalAlpha = alpha;
+        drawDiamond(ctx, pos.x, pos.y, size);
+        ctx.fill();
+
+        if (isActiveTrack && item.kind !== 'current') {
+          ctx.globalAlpha = 0.95;
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(item.kind === 'previous' ? 'P' : 'N', pos.x, pos.y - size - 3);
+        }
+
+        if (item.kind === 'current' && isActiveTrack) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, size + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    });
   }
 
   // ---- Source control ----
@@ -486,6 +928,16 @@ import Transport from '../components/Transport.astro';
         activeSource.detach();
       }
 
+      if (scrubPreviewRaf !== null) {
+        window.cancelAnimationFrame(scrubPreviewRaf);
+        scrubPreviewRaf = null;
+      }
+
+      if (recordedSaveTimer !== null) {
+        window.clearTimeout(recordedSaveTimer);
+        recordedSaveTimer = null;
+      }
+
       trailManager.clear();
       mainLoop.clearDetections();
 
@@ -493,6 +945,10 @@ import Transport from '../components/Transport.astro';
         currentVideoId = null;
         currentVideoUrl = '';
         recordedTrackSet = null;
+        recordedStatusNote = null;
+        recordedEditMode = false;
+        recordedEditToggle.checked = false;
+        renderRecordedKeyframeList();
         setTransportFps(DEFAULT_FRAME_RATE, true);
         activeSource = cameraSource;
         applySourcePresentation();
@@ -502,6 +958,10 @@ import Transport from '../components/Transport.astro';
         currentVideoId = null;
         currentVideoUrl = '';
         recordedTrackSet = null;
+        recordedStatusNote = null;
+        recordedEditMode = false;
+        recordedEditToggle.checked = false;
+        renderRecordedKeyframeList();
         activeSource = urlSource;
         applySourcePresentation();
         refreshOverlaySizing?.();
@@ -522,6 +982,9 @@ import Transport from '../components/Transport.astro';
   });
 
   document.addEventListener('click', (e) => {
+    if (isRecordedEditorActive() && container.contains(e.target as Node)) {
+      return;
+    }
     if (!controls.contains(e.target as Node) && !menuToggle.contains(e.target as Node)) {
       controls.classList.add('collapsed');
     }
@@ -564,7 +1027,9 @@ import Transport from '../components/Transport.astro';
     imported.videoUrl = currentVideoUrl;
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
+    recordedStatusNote = null;
     persistRecordedTrackSet();
+    renderRecordedKeyframeList();
     trailManager.clear();
     mainLoop.clearDetections();
     updateRecordedStatus('Imported recorded track set.');
@@ -596,7 +1061,9 @@ import Transport from '../components/Transport.astro';
     imported.videoUrl = currentVideoUrl;
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
+    recordedStatusNote = null;
     persistRecordedTrackSet();
+    renderRecordedKeyframeList();
     trailManager.clear();
     mainLoop.clearDetections();
     updateRecordedStatus(`Imported ${file.name}.`);
@@ -619,6 +1086,65 @@ import Transport from '../components/Transport.astro';
     a.remove();
     URL.revokeObjectURL(href);
     updateRecordedStatus('Exported recorded track set.');
+  });
+
+  recordedEditToggle.addEventListener('change', () => {
+    recordedEditMode = recordedEditToggle.checked;
+    updateRecordedEditorControlsVisibility();
+    updateEditOverlayInteractivity();
+  });
+
+  recordedActiveTrackSelect.addEventListener('change', (e) => {
+    recordedActiveTrack = (e.target as HTMLSelectElement).value === 'B' ? 'B' : 'A';
+    renderRecordedKeyframeList();
+  });
+
+  recordedAutoAdvanceSelect.addEventListener('change', (e) => {
+    const value = Number.parseInt((e.target as HTMLSelectElement).value, 10);
+    if ([0, 1, 2, 5, 10].includes(value)) {
+      recordedAutoAdvanceFrames = value;
+      localStorage.setItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY, String(value));
+    }
+  });
+
+  recordedDeleteFrameBtn.addEventListener('click', () => {
+    if (!isRecordedEditorActive()) return;
+    if (deleteActiveTrackKeyframeAtCurrentFrame()) {
+      updateRecordedStatus('Deleted keyframe at current frame.');
+    }
+  });
+
+  recordedClearTrackBtn.addEventListener('click', () => {
+    if (!isRecordedEditorActive() || !recordedTrackSet) return;
+    const label = recordedActiveTrack === 'A' ? 'Track A (green)' : 'Track B (red)';
+    if (!window.confirm(`Clear all keyframes from ${label}?`)) return;
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return;
+    replaceRecordedTrack(recordedActiveTrack, { ...track, keyframes: [] });
+    renderRecordedKeyframeList();
+    scheduleRecordedAutosave();
+    updateRecordedStatus(`Cleared ${label}.`);
+  });
+
+  recordedKeyframeList.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const frame = Number.parseInt(target.dataset.frame ?? '', 10);
+    if (!Number.isFinite(frame)) return;
+
+    if (target.classList.contains('recorded-keyframe-jump')) {
+      video.pause();
+      seekToRecordedFrame(frame);
+      return;
+    }
+
+    if (target.classList.contains('recorded-keyframe-delete')) {
+      const track = getRecordedTrack(recordedActiveTrack);
+      if (!track) return;
+      replaceRecordedTrack(recordedActiveTrack, deleteKeyframeAtFrame(track, frame, getRecordedFps()));
+      renderRecordedKeyframeList();
+      scheduleRecordedAutosave();
+    }
   });
 
   trackingModeSelect.addEventListener('change', (e) => {
@@ -672,10 +1198,22 @@ import Transport from '../components/Transport.astro';
     void toggleCamera();
   });
 
+  overlay.addEventListener('click', (e) => {
+    if (!isRecordedEditorActive()) return;
+
+    video.pause();
+    const norm = mapToNormalized(e.clientX, e.clientY);
+    upsertActiveTrackKeyframe(norm.x, norm.y);
+
+    if (recordedAutoAdvanceFrames > 0) {
+      stepRecordedFrames(recordedAutoAdvanceFrames);
+    }
+  });
+
   transportPlayPauseBtn.addEventListener('click', async () => {
     if (activeSource.kind !== 'video') return;
     if (video.paused || video.ended) {
-      await video.play();
+      await tryPlayVideo();
     } else {
       video.pause();
     }
@@ -690,6 +1228,14 @@ import Transport from '../components/Transport.astro';
     stepFrames(1);
   });
 
+  transportPrevKeyframeBtn.addEventListener('click', () => {
+    jumpNeighborKeyframe(-1);
+  });
+
+  transportNextKeyframeBtn.addEventListener('click', () => {
+    jumpNeighborKeyframe(1);
+  });
+
   transportSeek.addEventListener('pointerdown', () => {
     isDraggingSeek = true;
   });
@@ -698,13 +1244,14 @@ import Transport from '../components/Transport.astro';
     const frame = parseInt((e.target as HTMLInputElement).value, 10);
     seekDragFrame = Number.isFinite(frame) ? frame : 0;
     isDraggingSeek = true;
+    scheduleScrubPreview(seekDragFrame);
     updateTransportUi();
   });
 
   const commitSeekFromSlider = () => {
     const frame = parseInt(transportSeek.value, 10);
     isDraggingSeek = false;
-    commitSeek(Number.isFinite(frame) ? frame : 0);
+    flushScrubPreview(Number.isFinite(frame) ? frame : 0);
     updateTransportUi();
   };
 
@@ -730,11 +1277,34 @@ import Transport from '../components/Transport.astro';
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (shouldIgnoreTransportShortcut(e.target)) return;
 
+    const inRecordedMode = appState.get().trackingMode === 'recorded';
+
+    if (inRecordedMode) {
+      if (e.key === '[' || e.key === ',' || e.key === 'PageUp') {
+        e.preventDefault();
+        jumpNeighborKeyframe(-1);
+        return;
+      }
+      if (e.key === ']' || e.key === '.' || e.key === 'PageDown') {
+        e.preventDefault();
+        jumpNeighborKeyframe(1);
+        return;
+      }
+    }
+
+    if (isRecordedEditorActive()) {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteActiveTrackKeyframeAtCurrentFrame();
+        return;
+      }
+    }
+
     switch (e.key) {
       case ' ': {
         e.preventDefault();
         void (async () => {
-          if (video.paused || video.ended) await video.play();
+          if (video.paused || video.ended) await tryPlayVideo();
           else video.pause();
           updateTransportUi();
         })();
@@ -795,6 +1365,7 @@ import Transport from '../components/Transport.astro';
   // ---- Start ----
   async function init() {
     applySourcePresentation();
+    renderRecordedKeyframeList();
     refreshOverlaySizing = installOverlaySizing(video, overlay, [trailRenderer, debugRenderer]);
 
     await detector.load(appState.get().trackingMode);
@@ -853,6 +1424,11 @@ import Transport from '../components/Transport.astro';
     pointer-events: none;
     width: 100%;
     height: 100%;
+  }
+
+  .overlay-canvas.edit-mode {
+    pointer-events: auto;
+    cursor: crosshair;
   }
 
   .overlay-canvas.mirrored {

@@ -34,6 +34,8 @@ export interface MainLoopDeps {
   isDetectorReady: () => boolean;
   /** Called about once per second with the measured render frame rate. */
   onFps?: (fps: number) => void;
+  /** Optional overlay pass (e.g. keyframe editor markers) drawn after effects each frame. */
+  onAfterRender?: (context: RenderContext, frame: FrameData, timestamp: number) => void;
   /** Injectable for tests; defaults to the real overlay renderer. */
   renderFrame?: (context: RenderContext, frame: FrameData) => void;
   /** Injectable for tests; defaults to window.requestAnimationFrame. */
@@ -112,7 +114,7 @@ export class MainLoop {
       const snapshot = this.deps.getRecordedFrame?.(video.currentTime, timestamp, state.trailLength) ?? null;
       this.recordedFencers = snapshot?.fencers ?? null;
       this.detections = snapshot?.detections ?? [];
-      this.checkClash(timestamp);
+      this.checkClash(timestamp, state.trackingMode);
     } else {
       this.recordedFencers = null;
 
@@ -122,7 +124,7 @@ export class MainLoop {
             this.detections = await detect(video, timestamp);
             const tips = new Map(this.detections.map((d) => [d.id, d.tip]));
             trailManager.updateTips(tips, timestamp);
-            this.checkClash(timestamp);
+            this.checkClash(timestamp, state.trackingMode);
           } catch (err) {
             console.error('Detection error:', err);
           }
@@ -151,7 +153,9 @@ export class MainLoop {
     }
   };
 
-  private checkClash(timestamp: number): void {
+  private checkClash(timestamp: number, trackingMode: AppState['trackingMode']): void {
+    if (trackingMode !== 'hand') return;
+
     if (
       tipDistance(this.detections) < CLASH_DISTANCE &&
       timestamp - this.lastClashTime > CLASH_COOLDOWN_MS
@@ -185,5 +189,16 @@ export class MainLoop {
 
     // Effects on top; guard against zero-sized canvas
     effectManager.updateAndRender(timestamp, Math.max(1, overlay.width), Math.max(1, overlay.height));
+
+    this.deps.onAfterRender?.(
+      renderContext,
+      {
+        trackingMode,
+        debugMode,
+        fencers,
+        detections: this.detections,
+      },
+      timestamp
+    );
   }
 }

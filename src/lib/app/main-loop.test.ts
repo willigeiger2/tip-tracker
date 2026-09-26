@@ -219,4 +219,22 @@ describe('clash detection', () => {
     await crank(T0);
     expect(addEffect).not.toHaveBeenCalled();
   });
+
+  it('does not fire in non-hand tracking modes', async () => {
+    const close = [detection('A', 0.50, 0.5), detection('B', 0.51, 0.5)];
+
+    const pose = setup({ detections: close });
+    pose.appState.update({ trackingMode: 'pose' });
+    pose.source.attached = true;
+    pose.loop.start();
+    await pose.crank(T0);
+    expect(pose.addEffect).not.toHaveBeenCalled();
+
+    const recorded = setup({ recordedFrame: { fencers: new Map(), detections: close } });
+    recorded.appState.update({ trackingMode: 'recorded' });
+    recorded.source.attached = true;
+    recorded.loop.start();
+    await recorded.crank(T0);
+    expect(recorded.addEffect).not.toHaveBeenCalled();
+  });
 });

@@ -44,7 +44,8 @@ function toTrailPoints(points: Array<{ time: number; x: number; y: number }>): T
       z: 0,
       timestamp: p.time,
       velocity,
-      opacity: (i + 1) / points.length,
+      // Keep per-point opacity flat in recorded mode; age fading is handled in the renderer.
+      opacity: 1,
     };
   });
 }

@@ -1,7 +1,7 @@
 # Tip Track - Video Mode & Recorded Tracking Plan
 
 **Created**: 2026-09-24
-**Status**: Planning complete, no steps started
+**Status**: Step 5 in progress (editor implementation complete; manual checklist pending)
 **Baseline commit**: `1842306` (main)
 **Related docs**: `TIP_TRACK_PLAN.md` (original architecture), `TIP_TRACK_RESUME.md` (session notes)
 
@@ -588,6 +588,9 @@ Storage keys:
   stricter about the direct media URL shape).
 - Transport stepping quality on sources with duplicate/near-duplicate frames or ambiguous CFR/VFR
   metadata: consider optional "next distinct frame" stepping mode if this remains annoying.
+- Intermittent video playback freeze in video/recorded workflows: `NotSupportedError: The element has
+  no supported sources` can appear after extended editing/scrubbing; Play auto-reload and manual
+  "Load Video" recover, but root cause is unresolved.
 - "Not visible" keyframe type for explicit gaps.
 - More than two tracks / custom labels and colors.
 - Self-host MediaPipe `.task` model files.
@@ -613,6 +616,9 @@ Storage keys:
 | 2026-09-24 | 2 | New backlog item captured: after manual keyframe editing exists (step 5), add "auto-seed from pose" to generate an editable draft track. |
 | 2026-09-24 | 2 | iPhone/Safari check: direct Stream manifest URL (`https://videodelivery.net/<uid>/manifest/video.m3u8`) plays and tracks; non-manifest/player-style URL did not. Decision gate passes with canonical manifest URL. |
 | 2026-09-24 | 3 | Custom transport shipped (play/pause, ±1 frame, slider, readout, FPS detect/override, keyboard shortcuts). Back-step bug fixed (frame index floor + frame-center seek). Camera mode hides transport. Manual test acceptable: occasional jank likely source-frame duplication/CFR quirks; deferred to backlog. |
+| 2026-09-24 | 4 | Recorded mode shipped with JSON import/export, localStorage persistence, interpolation playback snapshots, and recorded-only panel visibility. Export filename now derives from the current video URL; schema no longer stores `videoName`. |
+| 2026-09-25 | 5 | Editor implementation landed on `video-mode/step-5-keyframe-editor`: edit toggle, active-track selection, auto-advance persistence, click/add-replace, drag markers, delete/clear, onion-skin markers + connector, keyframe list jump/delete, `[`/`]` nav, debounced autosave status. `npm run check`, `npm test`, and `npm run build` pass; manual checklist pending. |
+| 2026-09-26 | 5 | Editor/transport/render polish: live scrub preview, timeline-first editor (drag disabled), keyframe prev/next transport buttons + extra hotkeys, auto-advance frame-step consistency fix, interpolated current-frame marker, and trail rendering perf/fidelity tuning (no-blur default, optional stylized effects, longer recorded trail window). Intermittent `NotSupportedError` playback freeze still appears occasionally; mitigation auto-reloads source on Play failure, root cause deferred to backlog. |
 
 ## 11. Reference facts (verified during planning)
 

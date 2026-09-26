@@ -42,7 +42,7 @@
       <option value="pose">Pose Tracking (Full Body)</option>
       <option value="recorded">Recorded Points (Video Only)</option>
     </select>
-    <small class="hint">Hand: index fingertip = sword tip</small>
+    <small class="hint">Hand: index fingertip = sword tip. Clash flash is hand mode only.</small>
   </div>
 
   <div id="recordedPanel" class="control-group video-only hidden">
@@ -61,6 +61,45 @@
       <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
       <button id="recordedImportFileBtn" type="button" class="btn-secondary compact-btn">Import File</button>
       <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
+    </div>
+
+    <div class="recorded-editor">
+      <label class="inline-toggle">
+        <input id="recordedEditToggle" type="checkbox" />
+        <span>Edit keyframes</span>
+      </label>
+
+      <div id="recordedEditorControls" class="hidden">
+        <div class="recorded-editor-grid">
+        <label for="recordedActiveTrack">Active Track</label>
+        <select id="recordedActiveTrack">
+          <option value="A">Track A (Green)</option>
+          <option value="B">Track B (Red)</option>
+        </select>
+
+        <label for="recordedAutoAdvance">Auto-advance</label>
+        <select id="recordedAutoAdvance">
+          <option value="0">Off</option>
+          <option value="1">1 frame</option>
+          <option value="2" selected>2 frames</option>
+          <option value="5">5 frames</option>
+          <option value="10">10 frames</option>
+        </select>
+        </div>
+
+        <div class="recorded-actions">
+          <button id="recordedDeleteFrame" type="button" class="btn-secondary compact-btn">Delete At Frame</button>
+          <button id="recordedClearTrack" type="button" class="btn-secondary compact-btn">Clear Track</button>
+        </div>
+
+        <div class="recorded-list-wrap">
+          <div class="recorded-list-header">
+            <span>Keyframes</span>
+            <small class="hint">Jump: [ ] or , .</small>
+          </div>
+          <div id="recordedKeyframeList" class="recorded-keyframe-list"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -87,7 +126,7 @@
       type="range"
       id="trailLength"
       min="5"
-      max="60"
+      max="120"
       value="30"
       step="5"
     />
@@ -367,6 +406,75 @@
     width: auto;
     flex: 1;
     margin-top: 0;
+  }
+
+  .recorded-editor {
+    margin-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    padding-top: 10px;
+  }
+
+  .inline-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .inline-toggle input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+  }
+
+  .recorded-editor-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .recorded-list-wrap {
+    margin-top: 10px;
+  }
+
+  .recorded-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .recorded-keyframe-list {
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 4px;
+  }
+
+  .recorded-keyframe-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .recorded-keyframe-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .recorded-keyframe-jump,
+  .recorded-keyframe-delete {
+    padding: 6px 8px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .recorded-keyframe-delete {
+    min-width: 46px;
   }
 
   .hidden {
