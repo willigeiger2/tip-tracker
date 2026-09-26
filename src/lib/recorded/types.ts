@@ -17,6 +17,7 @@ export interface RecordedTrackSet {
   version: 1;
   videoId: string;
   videoUrl: string;
+  videoName: string;
   fps: number;
   maxGapSeconds: number;
   createdAt: number;

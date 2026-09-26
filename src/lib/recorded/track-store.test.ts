@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createEmptyTrackSet,
+  deriveVideoName,
   exportTrackSetToJson,
   importTrackSetFromJson,
   keyframeCount,
@@ -11,6 +12,7 @@ describe('createEmptyTrackSet', () => {
   it('creates A/green and B/red empty tracks', () => {
     const set = createEmptyTrackSet('vid-1', 'https://example.com/clip.m3u8', 30, 1.0);
     expect(set.videoId).toBe('vid-1');
+    expect(set.videoName).toBe('clip.m3u8');
     expect(set.tracks).toHaveLength(2);
     expect(set.tracks[0].id).toBe('A');
     expect(set.tracks[0].color).toBe('#00ff00');
@@ -46,6 +48,7 @@ describe('normalizeTrackSet', () => {
 
     const normalized = normalizeTrackSet(raw, 'expected', 'https://fallback', 30)!;
     expect(normalized.videoId).toBe('expected');
+    expect(normalized.videoName).toBe('a.m3u8');
     expect(normalized.tracks[0].keyframes).toHaveLength(2);
     expect(normalized.tracks[0].keyframes[1].x).toBe(1);
     expect(normalized.tracks[0].keyframes[1].y).toBe(0);
@@ -66,5 +69,13 @@ describe('import/export helpers', () => {
 
   it('returns null for malformed JSON', () => {
     expect(importTrackSetFromJson('{nope', 'v', '', 30)).toBeNull();
+  });
+});
+
+describe('deriveVideoName', () => {
+  it('prefers Stream UID when present', () => {
+    expect(deriveVideoName('https://watch.videodelivery.net/bcbf1e349f2b494a3dfa31deb8928452')).toBe(
+      'bcbf1e349f2b494a3dfa31deb8928452'
+    );
   });
 });

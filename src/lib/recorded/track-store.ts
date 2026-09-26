@@ -6,8 +6,26 @@ import {
   type RecordedTrackId,
   type RecordedTrackSet,
 } from './types';
+import { extractStreamUid } from './video-id';
 
 export const TRACKS_STORAGE_PREFIX = 'tiptrack:v1:tracks:';
+
+export function deriveVideoName(url: string): string {
+  const trimmed = url.trim();
+  const uid = extractStreamUid(trimmed);
+  if (uid) return uid;
+
+  try {
+    const parsed = new URL(trimmed);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length > 0) {
+      return decodeURIComponent(segments[segments.length - 1]);
+    }
+    return parsed.hostname;
+  } catch {
+    return trimmed || 'video';
+  }
+}
 
 const TRACK_META: Record<RecordedTrackId, { label: string; color: string; side: 'left' | 'right' }> = {
   A: { label: 'Track A', color: '#00ff00', side: 'left' },
@@ -79,6 +97,7 @@ export function createEmptyTrackSet(
     version: 1,
     videoId,
     videoUrl,
+    videoName: deriveVideoName(videoUrl),
     fps,
     maxGapSeconds,
     createdAt: now,
@@ -116,6 +135,14 @@ export function normalizeTrackSet(
     version: 1,
     videoId: expectedVideoId,
     videoUrl: typeof candidate.videoUrl === 'string' && candidate.videoUrl.trim() ? candidate.videoUrl : fallbackUrl,
+    videoName:
+      typeof candidate.videoName === 'string' && candidate.videoName.trim()
+        ? candidate.videoName
+        : deriveVideoName(
+            typeof candidate.videoUrl === 'string' && candidate.videoUrl.trim()
+              ? candidate.videoUrl
+              : fallbackUrl
+          ),
     fps,
     maxGapSeconds,
     createdAt,

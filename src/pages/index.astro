@@ -40,6 +40,7 @@ import Transport from '../components/Transport.astro';
   import { buildRecordedFrameSnapshot } from '../lib/recorded/playback';
   import {
     createEmptyTrackSet,
+    deriveVideoName,
     exportTrackSetToJson,
     importTrackSetFromJson,
     keyframeCount,
@@ -260,6 +261,7 @@ import Transport from '../components/Transport.astro';
     if (loaded) {
       loaded.videoId = videoId;
       loaded.videoUrl = url;
+      loaded.videoName = deriveVideoName(url);
       recordedTrackSet = loaded;
       saveTrackSet(recordedTrackSet);
     } else {
@@ -533,6 +535,7 @@ import Transport from '../components/Transport.astro';
 
     imported.videoId = currentVideoId;
     imported.videoUrl = currentVideoUrl;
+    imported.videoName = deriveVideoName(currentVideoUrl);
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     persistRecordedTrackSet();
@@ -565,6 +568,7 @@ import Transport from '../components/Transport.astro';
 
     imported.videoId = currentVideoId;
     imported.videoUrl = currentVideoUrl;
+    imported.videoName = deriveVideoName(currentVideoUrl);
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     persistRecordedTrackSet();
