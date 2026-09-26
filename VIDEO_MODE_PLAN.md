@@ -576,7 +576,8 @@ Storage keys:
 
 - Auto-seed recorded tracks from pose mode (or hand mode) as a **starting draft**,
   then refine in the keyframe editor. Do this only after step 5 so manual edit UX is already solid.
-  Direction: one-click "Generate draft", confidence-aware sparse keyframes, then normal edit/export.
+  Direction: one-click "Generate draft" and/or direct mode switch to Recorded using the latest
+  captured live points, confidence-aware sparse keyframes, then normal edit/export.
 - Compare mode: run live inference **and** recorded ground truth on the same clip, show per-frame
   error. The first real evaluation harness for a future model.
 - Training export: frames + labels (ffmpeg frame extraction at the stored `fps`), COCO-style JSON.
