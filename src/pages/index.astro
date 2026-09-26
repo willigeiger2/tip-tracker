@@ -40,7 +40,6 @@ import Transport from '../components/Transport.astro';
   import { buildRecordedFrameSnapshot } from '../lib/recorded/playback';
   import {
     createEmptyTrackSet,
-    deriveVideoName,
     exportTrackSetToJson,
     importTrackSetFromJson,
     keyframeCount,
@@ -224,6 +223,22 @@ import Transport from '../components/Transport.astro';
     history.replaceState(null, '', locationUrl.toString());
   }
 
+  function exportFilenameForVideo(url: string, fallbackId: string): string {
+    try {
+      const parsed = new URL(url);
+      const base = `${parsed.hostname}${parsed.pathname}`
+        .replace(/^\/+/, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '_')
+        .replace(/_+/g, '_')
+        .slice(0, 140)
+        .replace(/^_+|_+$/g, '');
+      if (base) return `tiptrack-${base}.json`;
+    } catch {
+      // Fall through to id-based name.
+    }
+    return `tiptrack-${fallbackId}.json`;
+  }
+
   function updateTrackingModeAvailability(): void {
     const inVideoMode = activeSource.kind === 'video';
     if (recordedTrackingOption) {
@@ -274,7 +289,6 @@ import Transport from '../components/Transport.astro';
     if (loaded) {
       loaded.videoId = videoId;
       loaded.videoUrl = url;
-      loaded.videoName = deriveVideoName(url);
       recordedTrackSet = loaded;
       saveTrackSet(recordedTrackSet);
     } else {
@@ -548,7 +562,6 @@ import Transport from '../components/Transport.astro';
 
     imported.videoId = currentVideoId;
     imported.videoUrl = currentVideoUrl;
-    imported.videoName = deriveVideoName(currentVideoUrl);
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     persistRecordedTrackSet();
@@ -581,7 +594,6 @@ import Transport from '../components/Transport.astro';
 
     imported.videoId = currentVideoId;
     imported.videoUrl = currentVideoUrl;
-    imported.videoName = deriveVideoName(currentVideoUrl);
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     persistRecordedTrackSet();
@@ -601,7 +613,7 @@ import Transport from '../components/Transport.astro';
     const href = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = href;
-    a.download = `tiptrack-${currentVideoId}.json`;
+    a.download = exportFilenameForVideo(currentVideoUrl, currentVideoId);
     document.body.appendChild(a);
     a.click();
     a.remove();

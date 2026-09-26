@@ -6,7 +6,6 @@ const set: RecordedTrackSet = {
   version: 1,
   videoId: 'vid',
   videoUrl: 'https://example.com/vid.m3u8',
-  videoName: 'vid.m3u8',
   fps: 30,
   maxGapSeconds: 1,
   createdAt: 1,
