@@ -36,7 +36,7 @@ export interface TrailPoint {
 export interface Fencer {
   id: string;           // 'A' or 'B'
   side: 'left' | 'right';
-  color: string;        // '#00ff00' (green) or '#ff0000' (red)
+  color: string;        // '#00ff00' (green) or '#ff5030' (red)
   tip: TipPosition | null;
   trail: TrailPoint[];  // ring buffer
 }
@@ -75,6 +75,16 @@ export type EffectMode =
 // Tracking mode: hand, full-body pose, specialized two-fencer pose, or recorded keyframes.
 export type TrackingMode = 'pose' | 'fencers' | 'hand' | 'recorded';
 
+export interface TipRefinementDebug {
+  prior: { x: number; y: number };
+  refined: { x: number; y: number };
+  searchStart: { x: number; y: number };
+  searchEnd: { x: number; y: number };
+  confidence: number;
+  edgeScore: number;
+  usedRefined: boolean;
+}
+
 // Unified detection result - works for both pose and hand modes
 export interface DetectionResult {
   id: string;           // 'A' or 'B'
@@ -82,6 +92,7 @@ export interface DetectionResult {
   tip: TipPosition;
   landmarks: Landmark[];  // All landmarks for this detection
   handedness?: 'Left' | 'Right';  // actual hand side (hand mode only)
+  refinement?: TipRefinementDebug;
 }
 
 // Tip estimator function type - modular and swappable

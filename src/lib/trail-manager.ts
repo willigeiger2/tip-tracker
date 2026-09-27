@@ -35,7 +35,7 @@ export class TrailManager {
       ['B', {
         id: 'B',
         side: 'right',
-        color: '#ff0000', // red
+        color: '#ff5030', // red
         tip: null,
         trail: []
       }],

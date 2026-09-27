@@ -50,6 +50,14 @@
     <small id="recordedGenerateHint" class="hint video-only hidden">
       Capture live hand/pose tips while playing, then generate editable recorded keyframes.
     </small>
+
+    <div id="fencersDebugGroup" class="hidden">
+      <label class="inline-toggle">
+        <input id="fencersDebugOverlay" type="checkbox" />
+        <span>Fencers debug overlay</span>
+      </label>
+      <small class="hint">Shows prior/refined tip points and confidence in fencers mode.</small>
+    </div>
   </div>
 
   <div id="recordedPanel" class="control-group video-only hidden">
@@ -85,6 +93,7 @@
         <label for="recordedAutoAdvance">Auto-advance</label>
         <select id="recordedAutoAdvance">
           <option value="0">Off</option>
+          <option value="next">Next keyframe</option>
           <option value="1">1 frame</option>
           <option value="2" selected>2 frames</option>
           <option value="5">5 frames</option>

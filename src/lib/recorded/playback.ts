@@ -9,7 +9,7 @@ export interface RecordedFrameSnapshot {
 
 const TRACK_META: Record<RecordedTrackId, { side: 'left' | 'right'; color: string }> = {
   A: { side: 'left', color: '#00ff00' },
-  B: { side: 'right', color: '#ff0000' },
+  B: { side: 'right', color: '#ff5030' },
 };
 
 function toTipPosition(id: RecordedTrackId, point: { x: number; y: number }, timestamp: number): TipPosition {

@@ -23,7 +23,7 @@ const set: RecordedTrackSet = {
     {
       id: 'B',
       label: 'Track B',
-      color: '#ff0000',
+      color: '#ff5030',
       keyframes: [
         { time: 0, x: 0.8, y: 0.2 },
         { time: 1, x: 0.6, y: 0.4 },

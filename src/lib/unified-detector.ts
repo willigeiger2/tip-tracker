@@ -20,6 +20,7 @@ import {
 } from './hand-detector';
 import { estimateTip } from './tip-estimator';
 import { FencerTracker, type TipCandidate } from './app/fencer-tracker';
+import { captureVideoFramePixels, refineTipFromFrame } from './fencers/tip-refiner';
 
 // Current tracking mode
 export type InferenceTrackingMode = Exclude<TrackingMode, 'recorded'>;
@@ -127,17 +128,41 @@ async function detectPoseMode(
   timestamp: number
 ): Promise<DetectionResult[]> {
   const poses = await detectPose(video, timestamp);
+  const refinementFrame = currentMode === 'fencers' ? captureVideoFramePixels(video) : null;
 
   const candidates: TipCandidate[] = [];
   for (const pose of poses.slice(0, 2)) {
     const noseX = pose.landmarks[POSE_LANDMARKS.NOSE]?.x ?? 0.5;
     const side = noseX < 0.5 ? 'left' : 'right';
-    const tip = estimateTip(pose, timestamp, side);
-    if (!tip) continue;
+    const baseTip = estimateTip(pose, timestamp, side);
+    if (!baseTip) continue;
+
+    let tip = baseTip;
+    let refinement: TipCandidate['refinement'] | undefined;
+    if (currentMode === 'fencers') {
+      const wrist = pose.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
+      const elbow = pose.landmarks[POSE_LANDMARKS.RIGHT_ELBOW];
+      if (wrist && elbow && refinementFrame) {
+        refinement = refineTipFromFrame(
+          refinementFrame,
+          { x: baseTip.x, y: baseTip.y },
+          wrist,
+          elbow
+        );
+        tip = {
+          ...baseTip,
+          x: refinement.refined.x,
+          y: refinement.refined.y,
+          confidence: Math.max(0.05, Math.min(baseTip.confidence, 0.35 + refinement.confidence * 0.65)),
+        };
+      }
+    }
+
     candidates.push({
       tip,
       landmarks: pose.landmarks,
       bodyX: poseBodyAnchorX(pose.landmarks),
+      refinement,
     });
   }
 

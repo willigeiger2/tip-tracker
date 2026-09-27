@@ -19,18 +19,27 @@ function detection(id: string, x: number, y: number): DetectionResult {
 }
 
 class FakeSource implements VideoSource {
-  readonly kind = 'camera' as const;
+  readonly kind: 'camera' | 'video';
   readonly mirrored = true;
-  readonly fit = 'cover' as const;
+  readonly fit: 'cover' | 'contain';
   attached = false;
   playing = true;
+  constructor(kind: 'camera' | 'video' = 'camera') {
+    this.kind = kind;
+    this.fit = kind === 'video' ? 'contain' : 'cover';
+  }
   async attach(): Promise<void> { this.attached = true; }
   detach(): void { this.attached = false; }
   isAttached(): boolean { return this.attached; }
   isPlaying(): boolean { return this.attached && this.playing; }
 }
 
-function setup(options: { detections?: DetectionResult[]; inferenceFps?: number; recordedFrame?: { fencers: Map<string, Fencer>; detections: DetectionResult[] } | null } = {}) {
+function setup(options: {
+  detections?: DetectionResult[];
+  inferenceFps?: number;
+  recordedFrame?: { fencers: Map<string, Fencer>; detections: DetectionResult[] } | null;
+  sourceKind?: 'camera' | 'video';
+} = {}) {
   const pending: Array<(t: number) => void | Promise<void>> = [];
   const requestFrame = (cb: (t: number) => void | Promise<void>) => { pending.push(cb); };
   /** Run every queued frame callback with the given timestamp. */
@@ -39,7 +48,11 @@ function setup(options: { detections?: DetectionResult[]; inferenceFps?: number;
     for (const cb of cbs) await cb(timestamp);
   };
 
-  const source = new FakeSource();
+  const source = new FakeSource(options.sourceKind ?? 'camera');
+  const video = {
+    currentTime: 0,
+    seeking: false,
+  } as HTMLVideoElement;
   const appState = createAppState({ inferenceFps: options.inferenceFps ?? 10 }); // 100 ms interval
   const trailManager = new TrailManager({ maxLength: 30 });
   const detect = vi.fn(async () => options.detections ?? []);
@@ -48,7 +61,7 @@ function setup(options: { detections?: DetectionResult[]; inferenceFps?: number;
   const onFps = vi.fn();
 
   const loop = new MainLoop({
-    video: {} as HTMLVideoElement,
+    video,
     getSource: () => source,
     appState,
     trailManager,
@@ -67,7 +80,7 @@ function setup(options: { detections?: DetectionResult[]; inferenceFps?: number;
     requestFrame,
   });
 
-  return { loop, source, appState, trailManager, detect, renderFrame, addEffect, onFps, crank, pending };
+  return { loop, source, video, appState, trailManager, detect, renderFrame, addEffect, onFps, crank, pending };
 }
 
 describe('MainLoop lifecycle', () => {
@@ -147,6 +160,49 @@ describe('MainLoop detection scheduling', () => {
     expect(renderFrame).toHaveBeenCalledTimes(2);
   });
 
+  it('detects paused video frames when stepping/seek changes currentTime', async () => {
+    const dets = [detection('A', 0.2, 0.5)];
+    const { loop, source, video, detect, trailManager, crank } = setup({
+      detections: dets,
+      inferenceFps: 1,
+      sourceKind: 'video',
+    });
+    source.attached = true;
+    source.playing = false;
+    loop.start();
+
+    await crank(T0);
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(trailManager.getFencers().get('A')?.trail.length).toBe(1);
+
+    await crank(T0 + 16);
+    expect(detect).toHaveBeenCalledTimes(1);
+
+    video.currentTime = 1 / 30;
+    await crank(T0 + 20);
+    expect(detect).toHaveBeenCalledTimes(2);
+    expect(trailManager.getFencers().get('A')?.trail.length).toBe(2);
+  });
+
+  it('does not fade trails while paused on a video frame', async () => {
+    const { loop, source, trailManager, crank } = setup({
+      detections: [detection('A', 0.2, 0.5)],
+      sourceKind: 'video',
+    });
+    source.attached = true;
+    source.playing = true;
+    loop.start();
+
+    await crank(T0);
+    expect(trailManager.getFencers().get('A')?.trail.length).toBe(1);
+
+    source.playing = false;
+    await crank(T0 + 16);
+    await crank(T0 + 32);
+    await crank(T0 + 48);
+    expect(trailManager.getFencers().get('A')?.trail.length).toBe(1);
+  });
+
   it('feeds detections into the trail manager and exposes them', async () => {
     const dets = [detection('A', 0.2, 0.5), detection('B', 0.8, 0.5)];
     const { loop, source, trailManager, crank } = setup({ detections: dets });
@@ -190,7 +246,7 @@ describe('MainLoop detection scheduling', () => {
   it('recorded mode bypasses detector and uses recorded frame snapshot', async () => {
     const fencers = new Map<string, Fencer>([
       ['A', { id: 'A', side: 'left', color: '#00ff00', tip: tip(0.2, 0.2), trail: [] }],
-      ['B', { id: 'B', side: 'right', color: '#ff0000', tip: tip(0.8, 0.2), trail: [] }],
+      ['B', { id: 'B', side: 'right', color: '#ff5030', tip: tip(0.8, 0.2), trail: [] }],
     ]);
     const dets = [detection('A', 0.2, 0.2), detection('B', 0.8, 0.2)];
     const { loop, source, appState, detect, crank } = setup({ recordedFrame: { fencers, detections: dets } });

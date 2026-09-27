@@ -55,6 +55,7 @@ export function tipDistance(detections: DetectionResult[]): number {
 export class MainLoop {
   private running = false;
   private lastDetectionTime = 0;
+  private lastDetectedMediaTime: number | null = null;
   private lastClashTime = 0;
   private frameCount = 0;
   private lastFpsTime = 0;
@@ -89,6 +90,7 @@ export class MainLoop {
   clearDetections(): void {
     this.detections = [];
     this.recordedFencers = null;
+    this.lastDetectedMediaTime = null;
   }
 
   private tick = async (timestamp: number): Promise<void> => {
@@ -118,28 +120,39 @@ export class MainLoop {
     } else {
       this.recordedFencers = null;
 
-      if (sourceAttached && timestamp - this.lastDetectionTime >= detectionInterval) {
-        if (isDetectorReady() && sourcePlaying) {
-          try {
-            this.detections = await detect(video, timestamp);
-            const tips = new Map(this.detections.map((d) => [d.id, d.tip]));
-            if (state.trackingMode === 'fencers') {
-              trailManager.updateTipsById(tips, timestamp);
-            } else {
-              trailManager.updateTips(tips, timestamp);
-            }
-            this.checkClash(timestamp, state.trackingMode);
-          } catch (err) {
-            console.error('Detection error:', err);
+      const mediaTime = video.currentTime;
+      const isPausedVideoFrame =
+        source.kind === 'video' &&
+        sourceAttached &&
+        !sourcePlaying &&
+        !video.seeking &&
+        (this.lastDetectedMediaTime === null || Math.abs(mediaTime - this.lastDetectedMediaTime) > 1e-4);
+      const isDueByRate = sourcePlaying && timestamp - this.lastDetectionTime >= detectionInterval;
+
+      if (sourceAttached && isDetectorReady() && (isDueByRate || isPausedVideoFrame)) {
+        try {
+          this.detections = await detect(video, timestamp);
+          const tips = new Map(this.detections.map((d) => [d.id, d.tip]));
+          if (state.trackingMode === 'fencers') {
+            trailManager.updateTipsById(tips, timestamp);
+          } else {
+            trailManager.updateTips(tips, timestamp);
           }
+          this.checkClash(timestamp, state.trackingMode);
+          this.lastDetectedMediaTime = mediaTime;
+          this.lastDetectionTime = timestamp;
+        } catch (err) {
+          console.error('Detection error:', err);
         }
-        this.lastDetectionTime = timestamp;
       }
     }
 
-    // If the source is not advancing frames (camera off, paused, seeking), fade trails gradually.
-    // Recorded mode is deterministic from keyframes and should not fade.
-    if (!sourcePlaying && state.trackingMode !== 'recorded') {
+    // Fade trails when no deterministic frame exists to hold on (detached source or camera paused).
+    // Recorded mode and paused video stepping should keep overlay state visible.
+    const shouldFadeTrails =
+      state.trackingMode !== 'recorded' &&
+      (!sourceAttached || (source.kind === 'camera' && !sourcePlaying));
+    if (shouldFadeTrails) {
       trailManager.fadeAllTrails();
     }
 
@@ -178,7 +191,11 @@ export class MainLoop {
 
     // Pre-existing behavior: trails are faded again here, so they fade at twice the nominal
     // rate while the source is off. Kept for parity; see the plan backlog.
-    if (!getSource().isPlaying() && appState.get().trackingMode !== 'recorded') {
+    const source = getSource();
+    const shouldFadeTrails =
+      appState.get().trackingMode !== 'recorded' &&
+      (!source.isAttached() || (source.kind === 'camera' && !source.isPlaying()));
+    if (shouldFadeTrails) {
       trailManager.fadeAllTrails();
     }
 

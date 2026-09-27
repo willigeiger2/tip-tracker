@@ -11,7 +11,12 @@ export const TRACKS_STORAGE_PREFIX = 'tiptrack:v1:tracks:';
 
 const TRACK_META: Record<RecordedTrackId, { label: string; color: string; side: 'left' | 'right' }> = {
   A: { label: 'Track A', color: '#00ff00', side: 'left' },
-  B: { label: 'Track B', color: '#ff0000', side: 'right' },
+  B: { label: 'Track B', color: '#ff5030', side: 'right' },
+};
+
+const LEGACY_TRACK_COLORS: Record<RecordedTrackId, string[]> = {
+  A: [],
+  B: ['#ff0000', '#ff8060'],
 };
 
 function clamp01(value: number): number {
@@ -54,11 +59,18 @@ function normalizeKeyframes(raw: unknown, fps: number): Keyframe[] {
 function normalizeTrack(raw: unknown, id: RecordedTrackId, fps: number): RecordedTrack {
   const meta = TRACK_META[id];
   const candidate = raw && typeof raw === 'object' ? (raw as Partial<RecordedTrack>) : null;
+  const rawColor = typeof candidate?.color === 'string' ? candidate.color.trim() : '';
+  const normalizedColor = rawColor.toLowerCase();
+  const color = !rawColor
+    ? meta.color
+    : LEGACY_TRACK_COLORS[id].includes(normalizedColor)
+      ? meta.color
+      : rawColor;
 
   return {
     id,
     label: typeof candidate?.label === 'string' && candidate.label.trim() ? candidate.label : meta.label,
-    color: typeof candidate?.color === 'string' && candidate.color.trim() ? candidate.color : meta.color,
+    color,
     keyframes: normalizeKeyframes(candidate?.keyframes, fps),
   };
 }

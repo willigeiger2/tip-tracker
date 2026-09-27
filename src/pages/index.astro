@@ -102,6 +102,8 @@ import Transport from '../components/Transport.astro';
   const recordedStatus = byId<HTMLSpanElement>('recordedStatus');
   const recordedGenerateDraftBtn = byId<HTMLButtonElement>('recordedGenerateDraft');
   const recordedGenerateHint = byId<HTMLSpanElement>('recordedGenerateHint');
+  const fencersDebugGroup = byId<HTMLDivElement>('fencersDebugGroup');
+  const fencersDebugOverlayInput = byId<HTMLInputElement>('fencersDebugOverlay');
   const recordedEditToggle = byId<HTMLInputElement>('recordedEditToggle');
   const recordedEditorControls = byId<HTMLDivElement>('recordedEditorControls');
   const recordedActiveTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
@@ -180,6 +182,10 @@ import Transport from '../components/Transport.astro';
     onAfterRender: ({ overlay: overlayCanvas, trailRenderer: overlayTrailRenderer }, frame, _timestamp) => {
       captureAutoSeedSamples(frame);
 
+      if (showFencersDebugOverlay && appState.get().trackingMode === 'fencers') {
+        drawFencersDebugOverlay(overlayCanvas, frame);
+      }
+
       if (!isRecordedEditorActive()) return;
       overlayTrailRenderer.clear();
       drawRecordedEditorOverlay(overlayCanvas);
@@ -196,11 +202,14 @@ import Transport from '../components/Transport.astro';
   let recordedTrackSet: RecordedTrackSet | null = null;
   let recordedActiveTrack: 'A' | 'B' = 'A';
   let recordedEditMode = false;
-  let recordedAutoAdvanceFrames = 2;
+  type RecordedAutoAdvanceMode = 0 | 1 | 2 | 5 | 10 | 'next';
+  const AUTO_ADVANCE_FRAME_VALUES: Array<Exclude<RecordedAutoAdvanceMode, 'next'>> = [0, 1, 2, 5, 10];
+  let recordedAutoAdvanceMode: RecordedAutoAdvanceMode = 2;
   let recordedSaveTimer: number | null = null;
   let recordedStatusNote: string | null = null;
   let autoSeedSamples: Record<'A' | 'B', LiveTipSample[]> = { A: [], B: [] };
   let lastAutoSeedTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
+  let showFencersDebugOverlay = false;
   let transportFps = DEFAULT_FRAME_RATE;
   let transportFpsApproximate = true;
   let isDraggingSeek = false;
@@ -212,14 +221,21 @@ import Transport from '../components/Transport.astro';
   const RECORDED_AUTO_ADVANCE_STORAGE_KEY = 'tiptrack:v1:editor:auto-advance';
   const AUTO_SEED_BASE_HINT =
     'Capture live hand/pose tips while playing, then generate editable recorded keyframes.';
-  const storedAutoAdvance = Number.parseInt(
-    localStorage.getItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY) ?? '2',
-    10
-  );
-  if ([0, 1, 2, 5, 10].includes(storedAutoAdvance)) {
-    recordedAutoAdvanceFrames = storedAutoAdvance;
+
+  function parseRecordedAutoAdvanceMode(raw: string | null): RecordedAutoAdvanceMode | null {
+    if (raw === 'next') return 'next';
+    const value = Number.parseInt(raw ?? '', 10);
+    if (AUTO_ADVANCE_FRAME_VALUES.includes(value as Exclude<RecordedAutoAdvanceMode, 'next'>)) {
+      return value as Exclude<RecordedAutoAdvanceMode, 'next'>;
+    }
+    return null;
   }
-  recordedAutoAdvanceSelect.value = String(recordedAutoAdvanceFrames);
+
+  const storedAutoAdvance = parseRecordedAutoAdvanceMode(localStorage.getItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY));
+  if (storedAutoAdvance !== null) {
+    recordedAutoAdvanceMode = storedAutoAdvance;
+  }
+  recordedAutoAdvanceSelect.value = String(recordedAutoAdvanceMode);
   recordedActiveTrackSelect.value = recordedActiveTrack;
 
   // ---- Configuration side effects ----
@@ -230,6 +246,7 @@ import Transport from '../components/Transport.astro';
   appState.on('trackingMode', (mode) => {
     trackingModeSelect.value = mode;
     void detector.switchTo(mode);
+    updateFencersDebugVisibility();
     updateRecordedPanelVisibility();
     renderRecordedKeyframeList();
     updateRecordedStatus();
@@ -311,6 +328,18 @@ import Transport from '../components/Transport.astro';
 
     if (!inVideoMode && appState.get().trackingMode === 'recorded') {
       appState.update({ trackingMode: 'hand' });
+    }
+
+    updateFencersDebugVisibility();
+  }
+
+  function updateFencersDebugVisibility(): void {
+    const show = appState.get().trackingMode === 'fencers';
+    fencersDebugGroup.classList.toggle('hidden', !show);
+    fencersDebugOverlayInput.disabled = !show;
+    if (!show) {
+      fencersDebugOverlayInput.checked = false;
+      showFencersDebugOverlay = false;
     }
   }
 
@@ -889,6 +918,16 @@ import Transport from '../components/Transport.astro';
     seekToRecordedFrame(target.frame);
   }
 
+  function applyRecordedAutoAdvance(): void {
+    if (recordedAutoAdvanceMode === 'next') {
+      jumpNeighborKeyframe(1);
+      return;
+    }
+    if (recordedAutoAdvanceMode > 0) {
+      stepRecordedFrames(recordedAutoAdvanceMode);
+    }
+  }
+
   function drawDiamond(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
     ctx.beginPath();
     ctx.moveTo(x, y - size);
@@ -896,6 +935,52 @@ import Transport from '../components/Transport.astro';
     ctx.lineTo(x, y + size);
     ctx.lineTo(x - size, y);
     ctx.closePath();
+  }
+
+  function drawFencersDebugOverlay(overlayCanvas: HTMLCanvasElement, frame: FrameData): void {
+    if (frame.trackingMode !== 'fencers') return;
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+
+    for (const detection of frame.detections) {
+      if (!detection.refinement) continue;
+
+      const color = detection.id === 'B' ? '#ff4d5a' : '#36d67a';
+      const prior = mapToCanvas(detection.refinement.prior.x, detection.refinement.prior.y);
+      const refined = mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y);
+      const start = mapToCanvas(detection.refinement.searchStart.x, detection.refinement.searchStart.y);
+      const end = mapToCanvas(detection.refinement.searchEnd.x, detection.refinement.searchEnd.y);
+      const confidence = Math.round(detection.refinement.confidence * 100);
+      const label = `${detection.id} ${confidence}%`;
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.95;
+
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(prior.x, prior.y, 4, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(refined.x, refined.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, refined.x + 7, refined.y - 8);
+      ctx.restore();
+    }
   }
 
   function drawRecordedEditorOverlay(overlayCanvas: HTMLCanvasElement): void {
@@ -1283,10 +1368,10 @@ import Transport from '../components/Transport.astro';
   });
 
   recordedAutoAdvanceSelect.addEventListener('change', (e) => {
-    const value = Number.parseInt((e.target as HTMLSelectElement).value, 10);
-    if ([0, 1, 2, 5, 10].includes(value)) {
-      recordedAutoAdvanceFrames = value;
-      localStorage.setItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY, String(value));
+    const next = parseRecordedAutoAdvanceMode((e.target as HTMLSelectElement).value);
+    if (next !== null) {
+      recordedAutoAdvanceMode = next;
+      localStorage.setItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY, String(next));
     }
   });
 
@@ -1341,6 +1426,10 @@ import Transport from '../components/Transport.astro';
     }
   });
 
+  fencersDebugOverlayInput.addEventListener('change', () => {
+    showFencersDebugOverlay = fencersDebugOverlayInput.checked;
+  });
+
   debugModeSelect.addEventListener('change', (e) => {
     appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
   });
@@ -1387,10 +1476,7 @@ import Transport from '../components/Transport.astro';
     video.pause();
     const norm = mapToNormalized(e.clientX, e.clientY);
     upsertActiveTrackKeyframe(norm.x, norm.y);
-
-    if (recordedAutoAdvanceFrames > 0) {
-      stepRecordedFrames(recordedAutoAdvanceFrames);
-    }
+    applyRecordedAutoAdvance();
   });
 
   transportPlayPauseBtn.addEventListener('click', async () => {

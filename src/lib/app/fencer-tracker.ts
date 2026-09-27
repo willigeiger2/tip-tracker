@@ -1,4 +1,4 @@
-import type { DetectionResult, Landmark, TipPosition } from '../../types/fencing';
+import type { DetectionResult, Landmark, TipPosition, TipRefinementDebug } from '../../types/fencing';
 
 type TrackId = 'A' | 'B';
 type Side = 'left' | 'right';
@@ -7,6 +7,7 @@ export interface TipCandidate {
   tip: TipPosition;
   landmarks: Landmark[];
   bodyX?: number;
+  refinement?: TipRefinementDebug;
 }
 
 function sideForX(x: number): Side {
@@ -84,6 +85,7 @@ export class FencerTracker {
         side,
       },
       landmarks: candidate.landmarks,
+      ...(candidate.refinement ? { refinement: candidate.refinement } : {}),
     };
   }
 
