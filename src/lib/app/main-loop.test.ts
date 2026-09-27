@@ -161,6 +161,20 @@ describe('MainLoop detection scheduling', () => {
     expect(loop.getDetections()).toEqual([]);
   });
 
+  it('fencers mode preserves upstream A/B IDs when updating trails', async () => {
+    const dets = [detection('A', 0.8, 0.5), detection('B', 0.2, 0.5)];
+    const { loop, source, appState, trailManager, crank } = setup({ detections: dets });
+    appState.update({ trackingMode: 'fencers' });
+    source.attached = true;
+    loop.start();
+    await crank(T0);
+
+    const a = trailManager.getFencers().get('A');
+    const b = trailManager.getFencers().get('B');
+    expect(a?.trail[0]?.x).toBeCloseTo(0.8, 6);
+    expect(b?.trail[0]?.x).toBeCloseTo(0.2, 6);
+  });
+
   it('reports fps roughly once per second', async () => {
     const { loop, source, onFps, crank } = setup();
     source.attached = true;

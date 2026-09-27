@@ -6,6 +6,7 @@ type Side = 'left' | 'right';
 export interface TipCandidate {
   tip: TipPosition;
   landmarks: Landmark[];
+  bodyX?: number;
 }
 
 function sideForX(x: number): Side {
@@ -18,8 +19,18 @@ function distance(a: TipPosition, b: TipPosition): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function normalizedBodyX(candidate: TipCandidate): number {
+  if (Number.isFinite(candidate.bodyX)) {
+    return Math.max(0, Math.min(1, candidate.bodyX as number));
+  }
+  return Math.max(0, Math.min(1, candidate.tip.x));
+}
+
 export class FencerTracker {
   private lastTipByTrack: Record<TrackId, TipPosition | null> = { A: null, B: null };
+  // Temporary default until we add a user-facing switch:
+  // left fencer is red (B), right fencer is green (A).
+  private readonly trackForSide: Record<Side, TrackId> = { left: 'B', right: 'A' };
 
   reset(): void {
     this.lastTipByTrack = { A: null, B: null };
@@ -33,19 +44,29 @@ export class FencerTracker {
     const usable = candidates.slice(0, 2);
     if (usable.length === 1) {
       const candidate = usable[0];
-      const aCost = this.matchCost('A', candidate.tip);
-      const bCost = this.matchCost('B', candidate.tip);
-      const track: TrackId = aCost <= bCost ? 'A' : 'B';
+      const bodyX = normalizedBodyX(candidate);
+      let track: TrackId;
+      if (bodyX < 0.48) {
+        track = this.trackForSide.left;
+      } else if (bodyX > 0.52) {
+        track = this.trackForSide.right;
+      } else {
+        const aCost = this.matchCost('A', candidate.tip);
+        const bCost = this.matchCost('B', candidate.tip);
+        track = aCost <= bCost ? 'A' : 'B';
+      }
       const assigned = this.asDetection(track, candidate);
       this.lastTipByTrack[track] = assigned.tip;
       return [assigned];
     }
 
-    const [c0, c1] = usable;
-    const costAB = this.matchCost('A', c0.tip) + this.matchCost('B', c1.tip);
-    const costBA = this.matchCost('A', c1.tip) + this.matchCost('B', c0.tip);
+    const sortedByBody = [...usable].sort((a, b) => normalizedBodyX(a) - normalizedBodyX(b));
+    const [leftCandidate, rightCandidate] = sortedByBody;
+    const [forA, forB] =
+      this.trackForSide.left === 'A'
+        ? [leftCandidate, rightCandidate]
+        : [rightCandidate, leftCandidate];
 
-    const [forA, forB] = costAB <= costBA ? [c0, c1] : [c1, c0];
     const a = this.asDetection('A', forA);
     const b = this.asDetection('B', forB);
     this.lastTipByTrack.A = a.tip;
@@ -54,7 +75,7 @@ export class FencerTracker {
   }
 
   private asDetection(track: TrackId, candidate: TipCandidate): DetectionResult {
-    const side = sideForX(candidate.tip.x);
+    const side = sideForX(normalizedBodyX(candidate));
     return {
       id: track,
       side,
@@ -68,7 +89,7 @@ export class FencerTracker {
 
   private matchCost(track: TrackId, tip: TipPosition): number {
     const previous = this.lastTipByTrack[track];
-    const expectedSide: Side = track === 'A' ? 'left' : 'right';
+    const expectedSide: Side = this.trackForSide.left === track ? 'left' : 'right';
     const tipSide = sideForX(tip.x);
 
     // Soft side prior only. Identity should mostly follow motion continuity.

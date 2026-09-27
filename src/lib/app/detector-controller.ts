@@ -4,10 +4,10 @@
 
 import type { TrackingMode } from '../../types/fencing';
 
-export type InferenceTrackingMode = 'hand' | 'pose';
+export type InferenceTrackingMode = 'hand' | 'pose' | 'fencers';
 
 function isInferenceTrackingMode(mode: TrackingMode): mode is InferenceTrackingMode {
-  return mode === 'hand' || mode === 'pose';
+  return mode === 'hand' || mode === 'pose' || mode === 'fencers';
 }
 
 /** The detector operations this controller drives (matches unified-detector's exports). */
@@ -36,7 +36,7 @@ export interface DetectorControllerDeps {
 
 export const DETECTION_CONFIDENCE = 0.5;
 
-/** Pose and hand modes both track up to two targets. */
+/** All live inference modes currently track up to two targets. */
 export function numTargetsFor(_mode: InferenceTrackingMode): number {
   return 2;
 }

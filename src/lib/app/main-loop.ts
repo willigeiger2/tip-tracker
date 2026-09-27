@@ -123,7 +123,11 @@ export class MainLoop {
           try {
             this.detections = await detect(video, timestamp);
             const tips = new Map(this.detections.map((d) => [d.id, d.tip]));
-            trailManager.updateTips(tips, timestamp);
+            if (state.trackingMode === 'fencers') {
+              trailManager.updateTipsById(tips, timestamp);
+            } else {
+              trailManager.updateTips(tips, timestamp);
+            }
             this.checkClash(timestamp, state.trackingMode);
           } catch (err) {
             console.error('Detection error:', err);

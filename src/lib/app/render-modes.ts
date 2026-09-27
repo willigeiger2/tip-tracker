@@ -30,6 +30,7 @@ export interface FrameData {
 export function renderFrame(context: RenderContext, frame: FrameData): void {
   const { overlay, trailRenderer, debugRenderer, mapToCanvas } = context;
   const { trackingMode, debugMode, fencers, detections } = frame;
+  const isPoseLike = trackingMode === 'pose' || trackingMode === 'fencers';
 
   if (trackingMode === 'recorded') {
     // Recorded mode has no landmarks/skeletons; unsupported debug modes degrade to trails+tips.
@@ -58,7 +59,7 @@ export function renderFrame(context: RenderContext, frame: FrameData): void {
       break;
 
     case 'landmarks':
-      if (trackingMode === 'pose') {
+      if (isPoseLike) {
         detections.forEach(detection => {
           const fencer = fencers.get(detection.id);
           debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ff00');
@@ -72,7 +73,7 @@ export function renderFrame(context: RenderContext, frame: FrameData): void {
       break;
 
     case 'skeleton':
-      if (trackingMode === 'pose') {
+      if (isPoseLike) {
         detections.forEach(detection => {
           const fencer = fencers.get(detection.id);
           debugRenderer.renderSkeleton(detection.landmarks, POSE_CONNECTIONS, fencer?.color ?? '#00ff00');
@@ -86,7 +87,7 @@ export function renderFrame(context: RenderContext, frame: FrameData): void {
       break;
 
     case 'vectors':
-      if (trackingMode === 'pose') {
+      if (isPoseLike) {
         detections.forEach(detection => {
           const lm = detection.landmarks;
           const wrist = lm[POSE_LANDMARKS.RIGHT_WRIST];
@@ -156,8 +157,8 @@ export function renderFrame(context: RenderContext, frame: FrameData): void {
       detections.forEach(detection => {
         const fencer = fencers.get(detection.id);
         if (!fencer) return;
-        
-        if (trackingMode === 'pose') {
+
+        if (isPoseLike) {
           const wrist = detection.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
           if (wrist && detection.tip) {
             debugRenderer.renderLightsaber(wrist, detection.tip, fencer.color);
@@ -176,7 +177,7 @@ export function renderFrame(context: RenderContext, frame: FrameData): void {
       break;
 
     case 'all':
-      if (trackingMode === 'pose') {
+      if (isPoseLike) {
         detections.forEach(detection => {
           const fencer = fencers.get(detection.id);
           debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ff00');

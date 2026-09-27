@@ -155,7 +155,8 @@ export function estimateTip(
   return {
     x: result.x,
     y: result.y,
-    z: wrist.z, // Include depth for 3D effects
+    // Pose-derived depth is noisy for fencing; keep pose/fencers rendering stable.
+    z: 0,
     confidence: result.confidence,
     timestamp,
     side,

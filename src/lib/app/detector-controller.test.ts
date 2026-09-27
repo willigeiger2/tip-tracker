@@ -18,9 +18,10 @@ function setup(options: { failInit?: boolean; attached?: boolean } = {}) {
 }
 
 describe('numTargetsFor', () => {
-  it('pose and hand both track up to two targets', () => {
+  it('all live modes track up to two targets', () => {
     expect(numTargetsFor('pose')).toBe(2);
     expect(numTargetsFor('hand')).toBe(2);
+    expect(numTargetsFor('fencers')).toBe(2);
   });
 });
 

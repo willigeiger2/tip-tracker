@@ -147,6 +147,27 @@ export class TrailManager {
 
     // Assign detections to fencers using proximity-based tracking
     const assigned = this.assignFencersByProximity(detections);
+    this.applyAssignedTips(assigned, timestamp);
+  }
+
+  /**
+   * Update tips using explicit fencer IDs (A/B) from upstream tracking.
+   * Use this when IDs have already been associated and should not be re-matched by proximity.
+   */
+  updateTipsById(detections: Map<string, TipPosition>, timestamp: number): void {
+    this.lastDetectionTime = timestamp;
+
+    const assigned = new Map<string, TipPosition>();
+    detections.forEach((tip, id) => {
+      if (this.fencers.has(id)) {
+        assigned.set(id, tip);
+      }
+    });
+
+    this.applyAssignedTips(assigned, timestamp);
+  }
+
+  private applyAssignedTips(assigned: Map<string, TipPosition>, timestamp: number): void {
 
     // Track which fencers received new points this frame
     const updatedFencers = new Set<string>();

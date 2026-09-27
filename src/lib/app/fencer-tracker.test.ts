@@ -13,12 +13,16 @@ function tip(x: number, y = 0.5, confidence = 1): TipPosition {
   };
 }
 
+function candidate(tipX: number, bodyX: number) {
+  return { tip: tip(tipX), bodyX, landmarks: [] };
+}
+
 describe('FencerTracker', () => {
-  it('initially assigns by side prior', () => {
+  it('assigns by body-side order (red-left, green-right)', () => {
     const tracker = new FencerTracker();
     const out = tracker.assign([
-      { tip: tip(0.8), landmarks: [] },
-      { tip: tip(0.2), landmarks: [] },
+      candidate(0.8, 0.2),
+      candidate(0.2, 0.8),
     ]);
 
     const byId = new Map(out.map((d) => [d.id, d]));
@@ -26,44 +30,44 @@ describe('FencerTracker', () => {
     expect(byId.get('B')?.tip.x).toBeCloseTo(0.8, 6);
   });
 
-  it('keeps identity by proximity on subsequent frames', () => {
+  it('keeps body-side identity even when tips cross center', () => {
     const tracker = new FencerTracker();
     tracker.assign([
-      { tip: tip(0.2), landmarks: [] },
-      { tip: tip(0.8), landmarks: [] },
+      candidate(0.2, 0.2),
+      candidate(0.8, 0.8),
     ]);
 
     const out = tracker.assign([
-      { tip: tip(0.27), landmarks: [] },
-      { tip: tip(0.73), landmarks: [] },
+      candidate(0.78, 0.22),
+      candidate(0.26, 0.78),
     ]);
 
     const byId = new Map(out.map((d) => [d.id, d]));
-    expect(byId.get('A')?.tip.x).toBeCloseTo(0.27, 6);
-    expect(byId.get('B')?.tip.x).toBeCloseTo(0.73, 6);
+    expect(byId.get('A')?.tip.x).toBeCloseTo(0.26, 6);
+    expect(byId.get('B')?.tip.x).toBeCloseTo(0.78, 6);
   });
 
-  it('assigns single-candidate frame to the nearer existing track', () => {
+  it('assigns single-candidate frame by body-side when clearly left/right', () => {
     const tracker = new FencerTracker();
     tracker.assign([
-      { tip: tip(0.2), landmarks: [] },
-      { tip: tip(0.8), landmarks: [] },
+      candidate(0.2, 0.2),
+      candidate(0.8, 0.8),
     ]);
 
-    const out = tracker.assign([{ tip: tip(0.25), landmarks: [] }]);
+    const out = tracker.assign([candidate(0.75, 0.2)]);
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe('A');
+    expect(out[0].id).toBe('B');
   });
 
   it('reset forgets previous state', () => {
     const tracker = new FencerTracker();
     tracker.assign([
-      { tip: tip(0.2), landmarks: [] },
-      { tip: tip(0.8), landmarks: [] },
+      candidate(0.2, 0.2),
+      candidate(0.8, 0.8),
     ]);
     tracker.reset();
 
-    const out = tracker.assign([{ tip: tip(0.78), landmarks: [] }]);
-    expect(out[0].id).toBe('B');
+    const out = tracker.assign([candidate(0.78, 0.78)]);
+    expect(out[0].id).toBe('A');
   });
 });

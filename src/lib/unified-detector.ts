@@ -26,6 +26,24 @@ export type InferenceTrackingMode = Exclude<TrackingMode, 'recorded'>;
 let currentMode: InferenceTrackingMode = 'pose';
 const fencerTracker = new FencerTracker();
 
+function poseBodyAnchorX(landmarks: { x: number }[]): number {
+  const xs: number[] = [];
+  const nose = landmarks[POSE_LANDMARKS.NOSE]?.x;
+  const leftShoulder = landmarks[POSE_LANDMARKS.LEFT_SHOULDER]?.x;
+  const rightShoulder = landmarks[POSE_LANDMARKS.RIGHT_SHOULDER]?.x;
+  const leftHip = landmarks[POSE_LANDMARKS.LEFT_HIP]?.x;
+  const rightHip = landmarks[POSE_LANDMARKS.RIGHT_HIP]?.x;
+
+  if (Number.isFinite(leftShoulder)) xs.push(leftShoulder);
+  if (Number.isFinite(rightShoulder)) xs.push(rightShoulder);
+  if (Number.isFinite(leftHip)) xs.push(leftHip);
+  if (Number.isFinite(rightHip)) xs.push(rightHip);
+  if (Number.isFinite(nose)) xs.push(nose);
+
+  if (xs.length === 0) return 0.5;
+  return xs.reduce((sum, x) => sum + x, 0) / xs.length;
+}
+
 // Track initialization state
 let isInitializing = false;
 
@@ -65,7 +83,7 @@ export async function initDetector(
       minTrackingConfidence = 0.5,
     } = options;
 
-    if (mode === 'pose') {
+    if (mode === 'pose' || mode === 'fencers') {
       await initPoseDetector(
         numTargets,
         minDetectionConfidence,
@@ -94,7 +112,7 @@ export async function detect(
   video: HTMLVideoElement,
   timestamp: number = performance.now()
 ): Promise<DetectionResult[]> {
-  if (currentMode === 'pose') {
+  if (currentMode === 'pose' || currentMode === 'fencers') {
     return detectPoseMode(video, timestamp);
   } else {
     return detectHandMode(video, timestamp);
@@ -116,7 +134,11 @@ async function detectPoseMode(
     const side = noseX < 0.5 ? 'left' : 'right';
     const tip = estimateTip(pose, timestamp, side);
     if (!tip) continue;
-    candidates.push({ tip, landmarks: pose.landmarks });
+    candidates.push({
+      tip,
+      landmarks: pose.landmarks,
+      bodyX: poseBodyAnchorX(pose.landmarks),
+    });
   }
 
   return fencerTracker.assign(candidates);
@@ -154,7 +176,7 @@ export async function setTrackingMode(mode: TrackingMode): Promise<void> {
  * Check if detector is initialized
  */
 export function isDetectorInitialized(): boolean {
-  if (currentMode === 'pose') {
+  if (currentMode === 'pose' || currentMode === 'fencers') {
     return isDetectorReady();
   } else {
     return isHandDetectorReady();
@@ -176,7 +198,7 @@ export async function resetCurrentDetector(): Promise<void> {
  * Get landmark indices for current mode
  */
 export function getLandmarkInfo() {
-  if (currentMode === 'pose') {
+  if (currentMode === 'pose' || currentMode === 'fencers') {
     return {
       type: 'pose' as const,
       landmarks: POSE_LANDMARKS,
