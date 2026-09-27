@@ -6,11 +6,13 @@
     "./worker-configuration.d.ts"
   ],
   "exclude": [
-    "dist"
-],
-"compilerOptions": {
+    "dist",
+    "public",
+    ".wrangler"
+  ],
+  "compilerOptions": {
     "types": [
-        "./worker-configuration.d.ts"
+      "./worker-configuration.d.ts"
     ]
-}
+  }
 }

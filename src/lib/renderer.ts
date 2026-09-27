@@ -1,12 +1,14 @@
 // Canvas Renderer Module
 // Handles trail rendering and visual effects
 
-import type { TrailPoint, Fencer } from '../types/fencing';
+import type { TrailPoint, Fencer, EffectMode } from '../types/fencing';
 
 export class TrailRenderer {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private coordinateMapper: ((normX: number, normY: number) => { x: number; y: number }) | null = null;
+  private effectMode: EffectMode = 'none';
+  private glowIntensity = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -22,6 +24,14 @@ export class TrailRenderer {
    */
   setCoordinateMapper(mapper: (normX: number, normY: number) => { x: number; y: number }): void {
     this.coordinateMapper = mapper;
+  }
+
+  setEffectMode(mode: EffectMode): void {
+    this.effectMode = mode;
+  }
+
+  setGlowIntensity(intensity: number): void {
+    this.glowIntensity = Math.max(0, intensity);
   }
 
   /**
@@ -99,6 +109,64 @@ export class TrailRenderer {
   private renderNeonTrail(trail: TrailPoint[], color: string): void {
     if (trail.length < 2) return;
 
+    let effectColor = color;
+    let glowWidthMul = 1;
+    let glowBlurMul = 1;
+    let glowAlphaMul = 1;
+    let coreAlphaMul = 1;
+    let coreWidthMul = 1;
+    let whiteCoreAlphaMul = 1;
+    let whiteCoreFadeExponent = 1;
+    let drawOuterColorLayer = false;
+    let outerColorWidthMul = 1;
+    let outerColorAlpha = 0.16;
+    let ageSpreadFactor = 0.2;
+    let drawGlowLayer = true;
+    let whiteCoreBlurMul = 1;
+    let showWhiteCore = true;
+
+    switch (this.effectMode) {
+      case 'lightsaber-glow':
+        glowWidthMul = 1.25;
+        glowBlurMul = 1.35;
+        glowAlphaMul = 1.2;
+        coreAlphaMul = 1.05;
+        break;
+      case 'matrix':
+        glowWidthMul = 0.9;
+        glowBlurMul = 0.65;
+        glowAlphaMul = 0.9;
+        coreAlphaMul = 0.95;
+        ageSpreadFactor = 0.15;
+        showWhiteCore = false;
+        break;
+      case 'motion-blur':
+        glowWidthMul = 1.35;
+        glowBlurMul = 0.5;
+        glowAlphaMul = 0.75;
+        coreAlphaMul = 0.95;
+        ageSpreadFactor = 0.35;
+        break;
+      case 'none':
+        drawGlowLayer = false;
+        whiteCoreBlurMul = 0;
+        whiteCoreAlphaMul = 0.9;
+        whiteCoreFadeExponent = 1.15;
+        coreWidthMul = 2;
+        drawOuterColorLayer = true;
+        outerColorWidthMul = 1.9;
+        outerColorAlpha = 0.17;
+        glowWidthMul = 0;
+        glowBlurMul = 0;
+        glowAlphaMul = 0;
+        default:
+        break;
+    }
+
+    const glowStrengthWidth = 0.6 + this.glowIntensity * 0.8;
+    const glowStrengthBlur = 0.2 + this.glowIntensity;
+    const glowStrengthAlpha = 0.25 + this.glowIntensity * 0.75;
+
     // Get average z depth for this trail (closer = more negative z)
     const avgZ = trail.reduce((sum, p) => sum + p.z, 0) / trail.length;
 
@@ -119,6 +187,7 @@ export class TrailRenderer {
       opacity: number;
       depthGlow: number;
       widthScale: number; // Per-segment width scale for perspective effect
+      progress: number;
     }[] = [];
 
     for (let i = 0; i < trail.length - 1; i++) {
@@ -130,7 +199,7 @@ export class TrailRenderer {
       const cp = this.getControlPoints(p0, p1, p2, p3, 1.2);
 
       const progress = (i + 1) / (trail.length - 1);
-      const opacity = smoothstep(0, 1, progress) * p2.opacity;
+      const opacity = (0.18 + 0.82 * smoothstep(0, 1, progress)) * p2.opacity;
 
       // Average z for this segment (closer = more negative)
       const segmentZ = (p1.z + p2.z) / 2;
@@ -161,41 +230,54 @@ export class TrailRenderer {
         opacity,
         depthGlow,
         widthScale,
+        progress,
       });
     }
 
     // Draw each segment individually for per-segment width and opacity control
     // Ensure white core always renders for very short trails
-    const whiteCoreLength = Math.max(3, Math.min(15, Math.floor(segments.length * 0.5)));
+    const whiteCoreLength = Math.max(3, Math.floor(segments.length * 0.5));
 
     segments.forEach((seg, i) => {
       // Per-segment width scale for perspective effect
       const segWidthScale = seg.widthScale;
+      const ageSpread = 1 + (1 - seg.progress) * ageSpreadFactor;
+      const thicknessBoost = 2.2;
       
       // Depth-adjusted glow: closer segments glow more
       const glowBoost = seg.depthGlow;
 
       // Base widths scaled by both overall depth and per-segment perspective
-      const outer = 24 * depthScale * segWidthScale;
-      const middle = 16 * depthScale * segWidthScale;
-      const inner = 10 * depthScale * segWidthScale;
-      const core = 5 * depthScale * segWidthScale;
+      const glow =
+        18 * depthScale * segWidthScale * thicknessBoost * ageSpread * glowWidthMul * glowStrengthWidth;
+      const core = 5 * depthScale * segWidthScale * thicknessBoost * coreWidthMul;
 
-      // Multiple thin layers with low opacity for smooth blending
-      // Outer glow - very wide, very low opacity, boosted by depth
-      this.drawSegment(seg, color, outer, 30 + glowBoost * 20, 0.15 + glowBoost * 0.1);
-      // Middle glow
-      this.drawSegment(seg, color, middle, 20 + glowBoost * 15, 0.2 + glowBoost * 0.1);
-      // Inner glow
-      this.drawSegment(seg, color, inner, 10 + glowBoost * 10, 0.25 + glowBoost * 0.1);
-      // Core - ensure minimum alpha to prevent black appearance
-      this.drawSegment(seg, color, core, 0, Math.max(0.3, 0.5 + glowBoost * 0.2));
+      // Performance pass: one glow layer + core (instead of 3 glow layers + core).
+      if (drawGlowLayer) {
+        this.drawSegment(
+          seg,
+          effectColor,
+          glow,
+          (18 + glowBoost * 14) * glowBlurMul * glowStrengthBlur,
+          Math.min(1, (0.22 + glowBoost * 0.12) * glowAlphaMul * glowStrengthAlpha)
+        );
+      }
+      if (drawOuterColorLayer) {
+        this.drawSegment(seg, effectColor, core * outerColorWidthMul, 0, Math.min(0.38, outerColorAlpha + glowBoost * 0.08));
+      }
+      this.drawSegment(seg, effectColor, core, 0, Math.min(1, Math.max(0.3, 0.5 + glowBoost * 0.2) * coreAlphaMul));
 
       // White core with smooth fade-in - ensure it renders for all segments in short trails
-      if (i >= segments.length - whiteCoreLength) {
+      if (showWhiteCore && i >= segments.length - whiteCoreLength) {
         const whiteProgress = (i - (segments.length - whiteCoreLength)) / Math.max(1, whiteCoreLength - 1);
-        const whiteOpacity = smoothstep(0, 1, whiteProgress);
-        this.drawSegment(seg, '#ffffff', 2 * depthScale * segWidthScale, glowBoost * 10, whiteOpacity);
+        const whiteOpacity = Math.pow(smoothstep(0, 1, whiteProgress), whiteCoreFadeExponent) * whiteCoreAlphaMul;
+        this.drawSegment(
+          seg,
+          '#ffffff',
+          2 * depthScale * segWidthScale * thicknessBoost,
+          glowBoost * 10 * whiteCoreBlurMul,
+          whiteOpacity
+        );
       }
     });
   }
@@ -270,9 +352,11 @@ export class TrailRenderer {
       this.ctx.save();
 
       // White tip dot - size varies with depth for perspective
+      // Keep this tight so it reads as a tip highlight, not a large marker.
+      const radius = Math.max(1.25, Math.min(2.75, 0.95 * widthScale));
       this.ctx.fillStyle = '#ffffff';
       this.ctx.beginPath();
-      this.ctx.arc(x, y, 3 * widthScale, 0, Math.PI * 2);
+      this.ctx.arc(x, y, radius, 0, Math.PI * 2);
       this.ctx.fill();
 
       this.ctx.restore();

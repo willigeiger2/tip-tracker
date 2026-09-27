@@ -10,18 +10,40 @@ import {
   LANDMARKS as POSE_LANDMARKS,
   POSE_CONNECTIONS 
 } from './detector';
-import { 
-  initHandDetector, 
+import {
+  initHandDetector,
   detectHands, 
   isHandDetectorReady, 
   resetHandDetector,
   HAND_LANDMARKS,
-  HAND_CONNECTIONS 
+  HAND_CONNECTIONS
 } from './hand-detector';
-import { estimateTipsForFencers } from './tip-estimator';
+import { estimateTip } from './tip-estimator';
+import { FencerTracker, type TipCandidate } from './app/fencer-tracker';
+import { captureVideoFramePixels, refineTipFromFrame } from './fencers/tip-refiner';
 
 // Current tracking mode
-let currentMode: TrackingMode = 'pose';
+export type InferenceTrackingMode = Exclude<TrackingMode, 'recorded'>;
+let currentMode: InferenceTrackingMode = 'pose';
+const fencerTracker = new FencerTracker();
+
+function poseBodyAnchorX(landmarks: { x: number }[]): number {
+  const xs: number[] = [];
+  const nose = landmarks[POSE_LANDMARKS.NOSE]?.x;
+  const leftShoulder = landmarks[POSE_LANDMARKS.LEFT_SHOULDER]?.x;
+  const rightShoulder = landmarks[POSE_LANDMARKS.RIGHT_SHOULDER]?.x;
+  const leftHip = landmarks[POSE_LANDMARKS.LEFT_HIP]?.x;
+  const rightHip = landmarks[POSE_LANDMARKS.RIGHT_HIP]?.x;
+
+  if (Number.isFinite(leftShoulder)) xs.push(leftShoulder);
+  if (Number.isFinite(rightShoulder)) xs.push(rightShoulder);
+  if (Number.isFinite(leftHip)) xs.push(leftHip);
+  if (Number.isFinite(rightHip)) xs.push(rightHip);
+  if (Number.isFinite(nose)) xs.push(nose);
+
+  if (xs.length === 0) return 0.5;
+  return xs.reduce((sum, x) => sum + x, 0) / xs.length;
+}
 
 // Track initialization state
 let isInitializing = false;
@@ -30,7 +52,7 @@ let isInitializing = false;
  * Initialize the detector based on tracking mode
  */
 export async function initDetector(
-  mode: TrackingMode,
+  mode: InferenceTrackingMode,
   options: {
     numTargets?: number;
     minDetectionConfidence?: number;
@@ -62,7 +84,7 @@ export async function initDetector(
       minTrackingConfidence = 0.5,
     } = options;
 
-    if (mode === 'pose') {
+    if (mode === 'pose' || mode === 'fencers') {
       await initPoseDetector(
         numTargets,
         minDetectionConfidence,
@@ -91,7 +113,7 @@ export async function detect(
   video: HTMLVideoElement,
   timestamp: number = performance.now()
 ): Promise<DetectionResult[]> {
-  if (currentMode === 'pose') {
+  if (currentMode === 'pose' || currentMode === 'fencers') {
     return detectPoseMode(video, timestamp);
   } else {
     return detectHandMode(video, timestamp);
@@ -106,30 +128,45 @@ async function detectPoseMode(
   timestamp: number
 ): Promise<DetectionResult[]> {
   const poses = await detectPose(video, timestamp);
-  const tips = estimateTipsForFencers(poses, timestamp);
-  
-  const results: DetectionResult[] = [];
-  
-  tips.forEach((tip, id) => {
-    const pose = poses.find((_, index) => {
-      // Match pose to tip based on side assignment logic
-      const noseX = poses[index]?.landmarks[POSE_LANDMARKS.NOSE]?.x ?? 0.5;
-      const expectedSide = id === 'A' ? 'left' : 'right';
-      const actualSide = noseX < 0.5 ? 'left' : 'right';
-      return actualSide === expectedSide;
-    });
-    
-    if (pose) {
-      results.push({
-        id,
-        side: tip.side,
-        tip,
-        landmarks: pose.landmarks,
-      });
+  const refinementFrame = currentMode === 'fencers' ? captureVideoFramePixels(video) : null;
+
+  const candidates: TipCandidate[] = [];
+  for (const pose of poses.slice(0, 2)) {
+    const noseX = pose.landmarks[POSE_LANDMARKS.NOSE]?.x ?? 0.5;
+    const side = noseX < 0.5 ? 'left' : 'right';
+    const baseTip = estimateTip(pose, timestamp, side);
+    if (!baseTip) continue;
+
+    let tip = baseTip;
+    let refinement: TipCandidate['refinement'] | undefined;
+    if (currentMode === 'fencers') {
+      const wrist = pose.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
+      const elbow = pose.landmarks[POSE_LANDMARKS.RIGHT_ELBOW];
+      if (wrist && elbow && refinementFrame) {
+        refinement = refineTipFromFrame(
+          refinementFrame,
+          { x: baseTip.x, y: baseTip.y },
+          wrist,
+          elbow
+        );
+        tip = {
+          ...baseTip,
+          x: refinement.refined.x,
+          y: refinement.refined.y,
+          confidence: Math.max(0.05, Math.min(baseTip.confidence, 0.35 + refinement.confidence * 0.65)),
+        };
+      }
     }
-  });
-  
-  return results;
+
+    candidates.push({
+      tip,
+      landmarks: pose.landmarks,
+      bodyX: poseBodyAnchorX(pose.landmarks),
+      refinement,
+    });
+  }
+
+  return fencerTracker.assign(candidates);
 }
 
 /**
@@ -153,6 +190,7 @@ export function getTrackingMode(): TrackingMode {
  * Set tracking mode (will require reinitialization)
  */
 export async function setTrackingMode(mode: TrackingMode): Promise<void> {
+  if (mode === 'recorded') return;
   if (mode !== currentMode) {
     await resetCurrentDetector();
     currentMode = mode;
@@ -163,7 +201,7 @@ export async function setTrackingMode(mode: TrackingMode): Promise<void> {
  * Check if detector is initialized
  */
 export function isDetectorInitialized(): boolean {
-  if (currentMode === 'pose') {
+  if (currentMode === 'pose' || currentMode === 'fencers') {
     return isDetectorReady();
   } else {
     return isHandDetectorReady();
@@ -176,6 +214,7 @@ export function isDetectorInitialized(): boolean {
 export async function resetCurrentDetector(): Promise<void> {
   resetDetector();
   resetHandDetector();
+  fencerTracker.reset();
   // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 }
@@ -184,7 +223,7 @@ export async function resetCurrentDetector(): Promise<void> {
  * Get landmark indices for current mode
  */
 export function getLandmarkInfo() {
-  if (currentMode === 'pose') {
+  if (currentMode === 'pose' || currentMode === 'fencers') {
     return {
       type: 'pose' as const,
       landmarks: POSE_LANDMARKS,
@@ -213,4 +252,4 @@ export function extractTips(results: DetectionResult[]): Map<string, TipPosition
 
 // Re-export types and constants for convenience
 export { POSE_LANDMARKS, POSE_CONNECTIONS, HAND_LANDMARKS, HAND_CONNECTIONS };
-export type { TrackingMode };
+export type { InferenceTrackingMode as TrackingMode };

@@ -1,791 +1,1668 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import ControlPanel from '../components/ControlPanel.astro';
+import Transport from '../components/Transport.astro';
 ---
 
 <Layout>
   <div id="container">
-    <video 
-      id="video" 
-      class="video-element"
-      autoplay 
-      playsinline 
-      muted
-    ></video>
-    <canvas 
-      id="overlay" 
-      class="overlay-canvas"
-    ></canvas>
-    
-    <!-- Hamburger Menu Toggle -->
-    <button id="menuToggle" aria-label="Toggle menu">
-      <span></span>
-      <span></span>
-      <span></span>
-    </button>
-    
-    <!-- Collapsible Controls Panel -->
-    <div id="controls" class="collapsed">
-      <h1>Tip Track</h1>
-      
-      <div class="control-group">
-        <label for="trackingMode">Tracking Mode</label>
-        <select id="trackingMode">
-          <option value="hand">Hand Tracking (Demo)</option>
-          <option value="pose">Pose Tracking (Full Body)</option>
-        </select>
-        <small class="hint">Hand: index fingertip = sword tip</small>
-      </div>
+    <video id="video" class="video-element fit-cover mirrored" autoplay playsinline muted></video>
+    <canvas id="overlay" class="overlay-canvas mirrored"></canvas>
 
-      <div class="control-group">
-        <label for="debugMode">Debug Mode</label>
-        <select id="debugMode">
-          <option value="none">Production (Trails)</option>
-          <option value="landmarks">Landmarks</option>
-          <option value="skeleton">Skeleton</option>
-          <option value="vectors">Vectors + Grid</option>
-          <option value="tips-only">Tip Points</option>
-          <option value="trails-only">Trails Only</option>
-          <option value="lightsaber">Lightsaber</option>
-          <option value="heatmap">Heatmap</option>
-          <option value="all">All Debug</option>
-        </select>
-      </div>
-
-      <div class="control-group">
-        <label for="trailLength">
-          Trail Length: <span id="trailLengthValue">30</span>
-        </label>
-        <input
-          type="range"
-          id="trailLength"
-          min="5"
-          max="60"
-          value="30"
-          step="5"
-        />
-      </div>
-
-      <div class="control-group">
-        <label for="inferenceRate">
-          Inference Rate: <span id="inferenceRateValue">15</span> fps
-        </label>
-        <input 
-          type="range" 
-          id="inferenceRate" 
-          min="5" 
-          max="30" 
-          value="15" 
-          step="1"
-        />
-      </div>
-
-      <details class="advanced-controls">
-        <summary>Advanced / Effects</summary>
-        <div class="control-group">
-          <label for="effectMode">Effect Mode</label>
-          <select id="effectMode">
-            <option value="none">None</option>
-            <option value="lightsaber-glow">Lightsaber Glow</option>
-            <option value="matrix">Matrix</option>
-            <option value="motion-blur">Motion Blur</option>
-          </select>
-        </div>
-        <div class="control-group">
-          <label for="glowIntensity">
-            Glow Intensity: <span id="glowIntensityValue">1.0</span>
-          </label>
-          <input 
-            type="range" 
-            id="glowIntensity" 
-            min="0" 
-            max="2" 
-            value="1" 
-            step="0.1"
-          />
-        </div>
-      </details>
-
-      <div class="control-group button-group">
-        <button id="clearTrails" class="btn-secondary">Clear Trails</button>
-        <button id="toggleCamera" class="btn-primary">Start Camera</button>
-      </div>
-
-      <div class="status">
-        <span id="detectionStatus">Initializing...</span>
-        <span id="fpsCounter">-- fps</span>
-      </div>
-    </div>
+    <ControlPanel />
+    <Transport />
   </div>
 </Layout>
 
 <script>
-  // Import modules
-  import {
-    initDetector,
-    detect,
-    getTrackingMode,
-    resetCurrentDetector,
-    POSE_LANDMARKS,
-    POSE_CONNECTIONS,
-    HAND_LANDMARKS,
-    HAND_CONNECTIONS
-  } from '../lib/unified-detector';
+  // Page bootstrap: look up DOM elements, construct app modules, bind UI events.
+  import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
-  import { EffectManager, FlashEffect, ExplosionEffect } from '../lib/effects';
-  import type { DebugMode, EffectMode, TrackingMode, DetectionResult } from '../types/fencing';
+  import { EffectManager } from '../lib/effects';
+  import { setPoseTipExtension } from '../lib/tip-estimator';
+  import {
+    DEFAULT_FRAME_RATE,
+    detectVideoFrameRate,
+    frameIndex,
+    loadFpsOverride,
+    saveFpsOverride,
+    seekTimeForFrame,
+  } from '../lib/app/frame-rate';
+  import { createCoordinateMapper, createInverseCoordinateMapper } from '../lib/app/coordinate-mapper';
+  import { createAppState } from '../lib/app/state';
+  import type { FrameData, RenderContext } from '../lib/app/render-modes';
+  import { MainLoop } from '../lib/app/main-loop';
+  import { installOverlaySizing } from '../lib/app/overlay-sizing';
+  import { DetectorController } from '../lib/app/detector-controller';
+  import { CameraSource } from '../lib/app/sources/camera-source';
+  import { UrlSource, UnsupportedVideoSourceError } from '../lib/app/sources/url-source';
+  import { buildRecordedFrameSnapshot } from '../lib/recorded/playback';
+  import { sampleTrackAt } from '../lib/recorded/interpolator';
+  import {
+    createEmptyTrackSet,
+    exportTrackSetToJson,
+    importTrackSetFromJson,
+    keyframeCount,
+    loadTrackSet,
+    saveTrackSet,
+  } from '../lib/recorded/track-store';
+  import type { RecordedTrackSet } from '../lib/recorded/types';
+  import { keyframesFromLiveSamples, type LiveTipSample } from '../lib/recorded/auto-seed';
+  import {
+    deleteKeyframeAtFrame,
+    keyframeAtFrame,
+    listKeyframesWithFrames,
+    nearestNeighborFrames,
+    upsertKeyframeAtFrame,
+  } from '../lib/recorded/keyframes';
+  import { deriveVideoId } from '../lib/recorded/video-id';
+  import type { SourceKind, VideoSource } from '../lib/app/sources/source';
+  import type { DebugMode, EffectMode, TrackingMode } from '../types/fencing';
 
-  // DOM Elements
-  const video = document.getElementById('video') as HTMLVideoElement;
-  const overlay = document.getElementById('overlay') as HTMLCanvasElement;
-  const menuToggle = document.getElementById('menuToggle') as HTMLButtonElement;
-  const controls = document.getElementById('controls') as HTMLDivElement;
-  const trackingModeSelect = document.getElementById('trackingMode') as HTMLSelectElement;
-  const debugModeSelect = document.getElementById('debugMode') as HTMLSelectElement;
-  const trailLengthInput = document.getElementById('trailLength') as HTMLInputElement;
-  const trailLengthValue = document.getElementById('trailLengthValue') as HTMLSpanElement;
-  const inferenceRateInput = document.getElementById('inferenceRate') as HTMLInputElement;
-  const inferenceRateValue = document.getElementById('inferenceRateValue') as HTMLSpanElement;
-  const glowIntensityInput = document.getElementById('glowIntensity') as HTMLInputElement;
-  const glowIntensityValue = document.getElementById('glowIntensityValue') as HTMLSpanElement;
-  const effectModeSelect = document.getElementById('effectMode') as HTMLSelectElement;
-  const clearTrailsBtn = document.getElementById('clearTrails') as HTMLButtonElement;
-  const toggleCameraBtn = document.getElementById('toggleCamera') as HTMLButtonElement;
-  const detectionStatus = document.getElementById('detectionStatus') as HTMLSpanElement;
-  const fpsCounter = document.getElementById('fpsCounter') as HTMLSpanElement;
+  function byId<T>(id: string): T {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`Missing element #${id}`);
+    return el as unknown as T;
+  }
 
-  // State
-  let isCameraRunning = false;
-  let isDetectorReady = false;
-  let trackingMode: TrackingMode = 'hand';
-  let debugMode: DebugMode = 'none';
-  let effectMode: EffectMode = 'none';
-  let inferenceFps = 15;
-  let detectionInterval = 1000 / inferenceFps;
-  let lastDetectionTime = 0;
-  let lastRenderTime = 0;
-  let frameCount = 0;
-  let lastFpsTime = 0;
-  let currentDetections: DetectionResult[] = [];
-  let isSwitchingMode = false;
+  // ---- DOM ----
+  const container = byId<HTMLDivElement>('container');
+  const video = byId<HTMLVideoElement>('video');
+  const overlay = byId<HTMLCanvasElement>('overlay');
+  const menuToggle = byId<HTMLButtonElement>('menuToggle');
+  const controls = byId<HTMLDivElement>('controls');
+  const sourceModeSelect = byId<HTMLSelectElement>('sourceMode');
+  const videoUrlInput = byId<HTMLInputElement>('videoUrl');
+  const loadVideoBtn = byId<HTMLButtonElement>('loadVideo');
+  const trackingModeSelect = byId<HTMLSelectElement>('trackingMode');
+  const recordedTrackingOption = trackingModeSelect.querySelector<HTMLOptionElement>(
+    'option[value="recorded"]'
+  );
+  const debugModeSelect = byId<HTMLSelectElement>('debugMode');
+  const trailLengthInput = byId<HTMLInputElement>('trailLength');
+  const trailLengthValue = byId<HTMLSpanElement>('trailLengthValue');
+  const inferenceRateInput = byId<HTMLInputElement>('inferenceRate');
+  const inferenceRateValue = byId<HTMLSpanElement>('inferenceRateValue');
+  const glowIntensityInput = byId<HTMLInputElement>('glowIntensity');
+  const glowIntensityValue = byId<HTMLSpanElement>('glowIntensityValue');
+  const poseTipExtensionInput = byId<HTMLInputElement>('poseTipExtension');
+  const poseTipExtensionValue = byId<HTMLSpanElement>('poseTipExtensionValue');
+  const effectModeSelect = byId<HTMLSelectElement>('effectMode');
+  const clearTrailsBtn = byId<HTMLButtonElement>('clearTrails');
+  const toggleCameraBtn = byId<HTMLButtonElement>('toggleCamera');
+  const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
+  const playbackStatus = byId<HTMLSpanElement>('playbackStatus');
+  const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
+  const recordedPanel = byId<HTMLDivElement>('recordedPanel');
+  const recordedJsonInput = byId<HTMLTextAreaElement>('recordedJsonInput');
+  const recordedImportPasteBtn = byId<HTMLButtonElement>('recordedImportPaste');
+  const recordedExportJsonBtn = byId<HTMLButtonElement>('recordedExportJson');
+  const recordedImportFileInput = byId<HTMLInputElement>('recordedImportFile');
+  const recordedStatus = byId<HTMLSpanElement>('recordedStatus');
+  const recordedGenerateDraftBtn = byId<HTMLButtonElement>('recordedGenerateDraft');
+  const recordedGenerateHint = byId<HTMLSpanElement>('recordedGenerateHint');
+  const fencersDebugGroup = byId<HTMLDivElement>('fencersDebugGroup');
+  const fencersDebugOverlayInput = byId<HTMLInputElement>('fencersDebugOverlay');
+  const recordedEditToggle = byId<HTMLInputElement>('recordedEditToggle');
+  const recordedEditorControls = byId<HTMLDivElement>('recordedEditorControls');
+  const recordedActiveTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
+  const recordedAutoAdvanceSelect = byId<HTMLSelectElement>('recordedAutoAdvance');
+  const recordedDeleteFrameBtn = byId<HTMLButtonElement>('recordedDeleteFrame');
+  const recordedClearTrackBtn = byId<HTMLButtonElement>('recordedClearTrack');
+  const recordedKeyframeList = byId<HTMLDivElement>('recordedKeyframeList');
+  const transportPlayPauseBtn = byId<HTMLButtonElement>('transportPlayPause');
+  const transportStepBackBtn = byId<HTMLButtonElement>('transportStepBack');
+  const transportStepForwardBtn = byId<HTMLButtonElement>('transportStepForward');
+  const transportPrevKeyframeBtn = byId<HTMLButtonElement>('transportPrevKeyframe');
+  const transportNextKeyframeBtn = byId<HTMLButtonElement>('transportNextKeyframe');
+  const transportSeek = byId<HTMLInputElement>('transportSeek');
+  const transportReadout = byId<HTMLSpanElement>('transportReadout');
+  const transportFpsBtn = byId<HTMLButtonElement>('transportFps');
 
-  // Managers
-  const trailManager = new TrailManager({ maxLength: 30 });
+  const cameraOnlyElements = Array.from(document.querySelectorAll<HTMLElement>('.camera-only'));
+  const videoOnlyElements = Array.from(document.querySelectorAll<HTMLElement>('.video-only'));
+
+  // ---- App modules ----
+  const appState = createAppState();
+
+  const cameraSource = new CameraSource();
+  const urlSource = new UrlSource();
+  let activeSource: VideoSource = cameraSource;
+  let switchingSource = false;
+
+  // Mapper tracks activeSource.fit dynamically (camera: cover, URL video: contain).
+  const mapToCanvas = createCoordinateMapper(video, () => activeSource.fit);
+  const mapToNormalized = createInverseCoordinateMapper(video, () => activeSource.fit);
+
+  const trailManager = new TrailManager({ maxLength: appState.get().trailLength });
   const trailRenderer = new TrailRenderer(overlay);
   const debugRenderer = new DebugRenderer(overlay);
   const effectManager = new EffectManager(overlay.getContext('2d')!);
+  const renderContext: RenderContext = { overlay, trailRenderer, debugRenderer, mapToCanvas };
 
-  // Set up coordinate mappers after they're created
-  function setupCoordinateMappers() {
-    trailRenderer.setCoordinateMapper(mapToCanvas);
-    debugRenderer.setCoordinateMapper(mapToCanvas);
-    // Set initial rates for lightsaber interpolation
-    debugRenderer.setRates(60, inferenceFps);
-  }
+  trailRenderer.setCoordinateMapper(mapToCanvas);
+  trailRenderer.setGlowIntensity(appState.get().glowIntensity);
+  trailRenderer.setEffectMode(appState.get().effectMode);
+  debugRenderer.setCoordinateMapper(mapToCanvas);
+  debugRenderer.setRates(60, appState.get().inferenceFps);
 
-  // Clash detection
-  let lastClashTime = 0;
-  const CLASH_COOLDOWN = 1000; // Minimum ms between clash effects
-  const CLASH_DISTANCE = 0.03; // Normalized distance (3% of screen) - must be very close to trigger
-
-  // Initialize
-  async function init() {
-    resizeAllCanvases();
-
-    // Handle window resize
-    window.addEventListener('resize', resizeAllCanvases);
-
-    // Handle visual viewport changes (mobile address bar, keyboard, etc.)
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', resizeAllCanvases);
-      window.visualViewport.addEventListener('scroll', resizeAllCanvases);
-    }
-
-    // Update canvas size when video metadata is loaded
-    video.addEventListener('loadedmetadata', () => {
-      // Force a resize after a short delay to ensure iOS has settled
-      resizeAllCanvases();
-      setTimeout(resizeAllCanvases, 100);
-      setTimeout(resizeAllCanvases, 500);
-    });
-
-    // Also handle when video starts playing (iOS sometimes delays dimension reporting)
-    video.addEventListener('playing', () => {
-      resizeAllCanvases();
-      setTimeout(resizeAllCanvases, 100);
-    });
-    
-    // iOS specific: resize when video dimensions change
-    video.addEventListener('resize', () => {
-      resizeAllCanvases();
-    });
-
-    // Setup coordinate mappers for renderers
-    setupCoordinateMappers();
-
-    // Setup event listeners
-    setupEventListeners();
-
-    // Initialize detector with default mode (hand)
-    await initializeDetector();
-
-    // Start camera automatically
-    await startCamera();
-  }
-
-  /**
-   * Resize all canvases to match the container size
-   * The overlay canvas covers the full viewport and we handle coordinate mapping separately
-   */
-  function resizeAllCanvases() {
-    resizeOverlayCanvas();
-    trailRenderer.resize();
-    debugRenderer.resize();
-  }
-
-  /**
-   * Resize overlay canvas to match the container (viewport)
-   * The canvas fills the container and we handle cropping via coordinate transformation
-   */
-  function resizeOverlayCanvas() {
-    // Use visualViewport on mobile for more accurate sizing
-    const containerWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-    const containerHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-
-    overlay.width = containerWidth;
-    overlay.height = containerHeight;
-
-    // Fill the container completely
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.left = '0';
-    overlay.style.top = '0';
-
-    // Debug logging - uncomment if needed
-    // console.log('[Resize] Container:', containerWidth, 'x', containerHeight, 
-    //             'Video:', video.videoWidth, 'x', video.videoHeight);
-  }
-
-  /**
-   * Get the video-to-container scaling and cropping info for object-fit: cover
-   * Returns scale factors and crop offsets to map video coordinates to screen coordinates
-   */
-  function getVideoMapping(): { 
-    scaleX: number; 
-    scaleY: number; 
-    cropX: number; 
-    cropY: number;
-    videoDisplayWidth: number;
-    videoDisplayHeight: number;
-  } {
-    // Use visualViewport on mobile for more accurate sizing
-    const containerWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-    const containerHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    
-    // Get actual video dimensions
-    const videoWidth = video.videoWidth || 1280;
-    const videoHeight = video.videoHeight || 720;
-
-    const videoAspect = videoWidth / videoHeight;
-    const containerAspect = containerWidth / containerHeight;
-
-    let scale: number;
-    let cropX = 0;
-    let cropY = 0;
-
-    if (videoAspect > containerAspect) {
-      // Video is wider than container - fills height, cropped on left/right
-      scale = containerHeight / videoHeight;
-      const displayedWidth = videoWidth * scale;
-      cropX = (displayedWidth - containerWidth) / 2 / scale; // How much video is cropped on each side in video coords
-    } else {
-      // Video is taller than container - fills width, cropped on top/bottom
-      scale = containerWidth / videoWidth;
-      const displayedHeight = videoHeight * scale;
-      cropY = (displayedHeight - containerHeight) / 2 / scale; // How much video is cropped on each side in video coords
-    }
-
-    return { 
-      scaleX: scale, 
-      scaleY: scale, 
-      cropX, 
-      cropY,
-      videoDisplayWidth: videoWidth * scale,
-      videoDisplayHeight: videoHeight * scale
-    };
-  }
-
-  /**
-   * Map normalized video coordinates (0-1) to canvas/screen coordinates
-   * Accounts for object-fit: cover cropping - only the visible portion maps to the screen
-   */
-  function mapToCanvas(normX: number, normY: number): { x: number; y: number } {
-    const { scaleX, scaleY, cropX, cropY } = getVideoMapping();
-    const containerWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-    const containerHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    const videoWidth = video.videoWidth || 1280;
-    const videoHeight = video.videoHeight || 720;
-
-    // Convert normalized to video pixel coords
-    const videoX = normX * videoWidth;
-    const videoY = normY * videoHeight;
-
-    // Map to screen coordinates (accounting for the cropped-out portions)
-    const screenX = (videoX - cropX) * scaleX;
-    const screenY = (videoY - cropY) * scaleY;
-
-    return { x: screenX, y: screenY };
-  }
-
-  async function initializeDetector() {
-    detectionStatus.textContent = `Loading ${trackingMode} model...`;
-    try {
-      await initDetector(trackingMode, {
-        numTargets: trackingMode === 'pose' ? 1 : 2, // 1 person for pose, 2 for hand
-        minDetectionConfidence: 0.5,
-        minPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-      isDetectorReady = true;
-      detectionStatus.textContent = isCameraRunning ? 'Running' : 'Ready - start camera';
-    } catch (err) {
-      console.error('Failed to initialize detector:', err);
-      detectionStatus.textContent = 'Model failed to load';
-    }
-  }
-
-  function setupEventListeners() {
-    // Menu toggle
-    menuToggle.addEventListener('click', () => {
-      controls.classList.toggle('collapsed');
-    });
-
-    // Close menu when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!controls.contains(e.target as Node) && !menuToggle.contains(e.target as Node)) {
-        controls.classList.add('collapsed');
-      }
-    });
-
-    // Tracking mode switch
-    trackingModeSelect.addEventListener('change', async (e) => {
-      const newMode = (e.target as HTMLSelectElement).value as TrackingMode;
-      if (newMode !== trackingMode && !isSwitchingMode) {
-        isSwitchingMode = true;
-        trackingMode = newMode;
-        
-        // Reset detector
-        isDetectorReady = false;
-        await resetCurrentDetector();
-        trailManager.clear();
-        currentDetections = [];
-        
-        // Reinitialize with new mode
-        await initializeDetector();
-        isSwitchingMode = false;
-      }
-    });
-
-    // Debug mode
-    debugModeSelect.addEventListener('change', (e) => {
-      debugMode = (e.target as HTMLSelectElement).value as DebugMode;
-    });
-
-    // Trail length
-    trailLengthInput.addEventListener('input', (e) => {
-      const value = parseInt((e.target as HTMLInputElement).value);
-      trailLengthValue.textContent = value.toString();
-      trailManager.setConfig({ maxLength: value });
-    });
-
-    // Inference rate
-    inferenceRateInput.addEventListener('input', (e) => {
-      const value = parseInt((e.target as HTMLInputElement).value);
-      inferenceRateValue.textContent = value.toString();
-      inferenceFps = value;
-      detectionInterval = 1000 / inferenceFps;
-      // Update debug renderer for lightsaber interpolation
-      debugRenderer.setRates(60, inferenceFps);
-    });
-
-    // Glow intensity
-    if (glowIntensityInput) {
-      glowIntensityInput.addEventListener('input', (e) => {
-        const value = parseFloat((e.target as HTMLInputElement).value);
-        glowIntensityValue.textContent = value.toFixed(1);
-      });
-    }
-
-    // Effect mode
-    if (effectModeSelect) {
-      effectModeSelect.addEventListener('change', (e) => {
-        effectMode = (e.target as HTMLSelectElement).value as EffectMode;
-      });
-    }
-
-    // Clear trails
-    clearTrailsBtn.addEventListener('click', () => {
+  const detector = new DetectorController({
+    backend: { init: initDetector, reset: resetCurrentDetector },
+    onStatus: (text) => {
+      detectionStatus.textContent = text;
+    },
+    isSourceAttached: () => activeSource.isAttached(),
+    onSwitchStart: () => {
       trailManager.clear();
-    });
+      mainLoop.clearDetections();
+    },
+  });
 
-    // Toggle camera
-    toggleCameraBtn.addEventListener('click', toggleCamera);
+  const mainLoop = new MainLoop({
+    video,
+    getSource: () => activeSource,
+    appState,
+    trailManager,
+    effectManager,
+    renderContext,
+    detect,
+    getRecordedFrame: (mediaTime, timestamp, trailSamples) => {
+      if (appState.get().trackingMode !== 'recorded') return null;
+      if (!recordedTrackSet) return null;
+      const trailWindowSeconds = Math.max(0.25, trailSamples / Math.max(1, recordedTrackSet.fps));
+      return buildRecordedFrameSnapshot(
+        recordedTrackSet,
+        mediaTime,
+        timestamp,
+        trailSamples,
+        trailWindowSeconds
+      );
+    },
+    onAfterRender: ({ overlay: overlayCanvas, trailRenderer: overlayTrailRenderer }, frame, _timestamp) => {
+      captureAutoSeedSamples(frame);
+
+      if (showFencersDebugOverlay && appState.get().trackingMode === 'fencers') {
+        drawFencersDebugOverlay(overlayCanvas, frame);
+      }
+
+      if (!isRecordedEditorActive()) return;
+      overlayTrailRenderer.clear();
+      drawRecordedEditorOverlay(overlayCanvas);
+    },
+    isDetectorReady: () => detector.isReady(),
+    onFps: (fps) => {
+      fpsCounter.textContent = `${fps} fps`;
+    },
+  });
+
+  let refreshOverlaySizing: (() => void) | null = null;
+  let currentVideoId: string | null = null;
+  let currentVideoUrl = '';
+  let recordedTrackSet: RecordedTrackSet | null = null;
+  let recordedActiveTrack: 'A' | 'B' = 'A';
+  let recordedEditMode = false;
+  type RecordedAutoAdvanceMode = 0 | 1 | 2 | 5 | 10 | 'next';
+  const AUTO_ADVANCE_FRAME_VALUES: Array<Exclude<RecordedAutoAdvanceMode, 'next'>> = [0, 1, 2, 5, 10];
+  let recordedAutoAdvanceMode: RecordedAutoAdvanceMode = 2;
+  let recordedSaveTimer: number | null = null;
+  let recordedStatusNote: string | null = null;
+  let autoSeedSamples: Record<'A' | 'B', LiveTipSample[]> = { A: [], B: [] };
+  let lastAutoSeedTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
+  let showFencersDebugOverlay = false;
+  let transportFps = DEFAULT_FRAME_RATE;
+  let transportFpsApproximate = true;
+  let isDraggingSeek = false;
+  let seekDragFrame = 0;
+  let scrubPreviewRaf: number | null = null;
+  let scrubPreviewFrame = 0;
+
+  const RECORDED_AUTOSAVE_MS = 500;
+  const RECORDED_AUTO_ADVANCE_STORAGE_KEY = 'tiptrack:v1:editor:auto-advance';
+  const AUTO_SEED_BASE_HINT =
+    'Capture live hand/pose tips while playing, then generate editable recorded keyframes.';
+
+  function parseRecordedAutoAdvanceMode(raw: string | null): RecordedAutoAdvanceMode | null {
+    if (raw === 'next') return 'next';
+    const value = Number.parseInt(raw ?? '', 10);
+    if (AUTO_ADVANCE_FRAME_VALUES.includes(value as Exclude<RecordedAutoAdvanceMode, 'next'>)) {
+      return value as Exclude<RecordedAutoAdvanceMode, 'next'>;
+    }
+    return null;
   }
 
-  async function startCamera(): Promise<void> {
-    if (isCameraRunning) return;
+  const storedAutoAdvance = parseRecordedAutoAdvanceMode(localStorage.getItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY));
+  if (storedAutoAdvance !== null) {
+    recordedAutoAdvanceMode = storedAutoAdvance;
+  }
+  recordedAutoAdvanceSelect.value = String(recordedAutoAdvanceMode);
+  recordedActiveTrackSelect.value = recordedActiveTrack;
+
+  // ---- Configuration side effects ----
+  appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
+  appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
+  appState.on('glowIntensity', (value) => trailRenderer.setGlowIntensity(value));
+  appState.on('effectMode', (value) => trailRenderer.setEffectMode(value));
+  appState.on('trackingMode', (mode) => {
+    trackingModeSelect.value = mode;
+    void detector.switchTo(mode);
+    updateFencersDebugVisibility();
+    updateRecordedPanelVisibility();
+    renderRecordedKeyframeList();
+    updateRecordedStatus();
+  });
+  appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
+  setPoseTipExtension(appState.get().poseTipExtension);
+
+  // ---- Helpers ----
+  function applySourcePresentation(): void {
+    sourceModeSelect.value = activeSource.kind;
+
+    video.classList.toggle('mirrored', activeSource.mirrored);
+    overlay.classList.toggle('mirrored', activeSource.mirrored);
+    video.classList.toggle('fit-cover', activeSource.fit === 'cover');
+    video.classList.toggle('fit-contain', activeSource.fit === 'contain');
+    video.controls = false;
+
+    const inCameraMode = activeSource.kind === 'camera';
+    for (const el of cameraOnlyElements) el.classList.toggle('hidden', !inCameraMode);
+    for (const el of videoOnlyElements) el.classList.toggle('hidden', inCameraMode);
+
+    updateTrackingModeAvailability();
+    updateRecordedPanelVisibility();
+    updateRecordedStatus();
+    updateAutoSeedUi();
+
+    updatePlaybackStatus();
+  }
+
+  function updatePlaybackStatus(): void {
+    if (activeSource.kind === 'camera') {
+      playbackStatus.textContent = 'camera';
+      updateTransportUi();
+      return;
+    }
+
+    const dimensions =
+      video.videoWidth > 0 && video.videoHeight > 0
+        ? `${video.videoWidth}x${video.videoHeight}`
+        : '--x--';
+
+    let state = 'paused';
+    if (video.seeking) state = 'seeking';
+    else if (video.ended) state = 'ended';
+    else if (!video.paused) state = 'playing';
+
+    playbackStatus.textContent = `${dimensions} ${state}`;
+    updateTransportUi();
+  }
+
+  function setVideoQueryParam(url: string): void {
+    const locationUrl = new URL(window.location.href);
+    if (url) locationUrl.searchParams.set('video', url);
+    else locationUrl.searchParams.delete('video');
+    history.replaceState(null, '', locationUrl.toString());
+  }
+
+  function exportFilenameForVideo(url: string, fallbackId: string): string {
+    try {
+      const parsed = new URL(url);
+      const base = `${parsed.hostname}${parsed.pathname}`
+        .replace(/^\/+/, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '_')
+        .replace(/_+/g, '_')
+        .slice(0, 140)
+        .replace(/^_+|_+$/g, '');
+      if (base) return `tiptrack-${base}.json`;
+    } catch {
+      // Fall through to id-based name.
+    }
+    return `tiptrack-${fallbackId}.json`;
+  }
+
+  function updateTrackingModeAvailability(): void {
+    const inVideoMode = activeSource.kind === 'video';
+    if (recordedTrackingOption) {
+      recordedTrackingOption.disabled = !inVideoMode;
+    }
+
+    if (!inVideoMode && appState.get().trackingMode === 'recorded') {
+      appState.update({ trackingMode: 'hand' });
+    }
+
+    updateFencersDebugVisibility();
+  }
+
+  function updateFencersDebugVisibility(): void {
+    const show = appState.get().trackingMode === 'fencers';
+    fencersDebugGroup.classList.toggle('hidden', !show);
+    fencersDebugOverlayInput.disabled = !show;
+    if (!show) {
+      fencersDebugOverlayInput.checked = false;
+      showFencersDebugOverlay = false;
+    }
+  }
+
+  function autoSeedSampleCount(): number {
+    return autoSeedSamples.A.length + autoSeedSamples.B.length;
+  }
+
+  function updateAutoSeedUi(): void {
+    const inVideoMode = activeSource.kind === 'video';
+    const liveTrackingMode = inVideoMode && appState.get().trackingMode !== 'recorded';
+    const sampleCount = autoSeedSampleCount();
+
+    recordedGenerateDraftBtn.classList.toggle('hidden', !liveTrackingMode);
+    recordedGenerateHint.classList.toggle('hidden', !liveTrackingMode);
+    recordedGenerateDraftBtn.disabled = !liveTrackingMode || !currentVideoId || sampleCount === 0;
+    recordedGenerateDraftBtn.textContent = 'Generate Recorded Draft';
+
+    if (!liveTrackingMode) {
+      recordedGenerateHint.textContent = AUTO_SEED_BASE_HINT;
+      return;
+    }
+
+    if (sampleCount === 0) {
+      recordedGenerateHint.textContent = 'Play video in Hand or Pose mode to capture draft samples.';
+      return;
+    }
+
+    const a = autoSeedSamples.A.length;
+    const b = autoSeedSamples.B.length;
+
+    recordedGenerateHint.textContent =
+      `Captured ${sampleCount} live sample${sampleCount === 1 ? '' : 's'} (A ${a}, B ${b}). ` +
+      'Generate a recorded draft when ready.';
+  }
+
+  function resetAutoSeedCapture(): void {
+    autoSeedSamples = { A: [], B: [] };
+    lastAutoSeedTimestampByTrack = { A: null, B: null };
+    updateAutoSeedUi();
+  }
+
+  function updateRecordedPanelVisibility(): void {
+    const show = activeSource.kind === 'video' && appState.get().trackingMode === 'recorded';
+    recordedPanel.classList.toggle('hidden', !show);
+
+    recordedJsonInput.disabled = !show;
+    recordedImportPasteBtn.disabled = !show;
+    recordedExportJsonBtn.disabled = !show;
+    recordedImportFileInput.disabled = !show;
+    recordedEditToggle.disabled = !show;
+
+    updateRecordedEditorControlsVisibility();
+
+    updateEditOverlayInteractivity();
+    updateAutoSeedUi();
+  }
+
+  function updateRecordedEditorControlsVisibility(): void {
+    const panelVisible = activeSource.kind === 'video' && appState.get().trackingMode === 'recorded';
+    const controlsVisible = panelVisible && recordedEditMode;
+    recordedEditorControls.classList.toggle('hidden', !controlsVisible);
+
+    recordedActiveTrackSelect.disabled = !controlsVisible;
+    recordedAutoAdvanceSelect.disabled = !controlsVisible;
+    recordedDeleteFrameBtn.disabled = !controlsVisible;
+    recordedClearTrackBtn.disabled = !controlsVisible;
+  }
+
+  function isRecordedEditorActive(): boolean {
+    return (
+      activeSource.kind === 'video' &&
+      appState.get().trackingMode === 'recorded' &&
+      recordedEditMode &&
+      recordedTrackSet !== null
+    );
+  }
+
+  function updateEditOverlayInteractivity(): void {
+    const active = isRecordedEditorActive();
+    overlay.classList.toggle('edit-mode', active);
+  }
+
+  function updateRecordedStatus(customMessage?: string): void {
+    if (customMessage) {
+      recordedStatus.textContent = customMessage;
+      return;
+    }
+
+    if (activeSource.kind !== 'video') {
+      recordedStatus.textContent = 'Recorded mode is available in video source only.';
+      return;
+    }
+
+    if (!recordedTrackSet) {
+      recordedStatus.textContent = 'No recorded keyframes loaded.';
+      return;
+    }
+
+    const count = keyframeCount(recordedTrackSet);
+    const base = `${count} keyframe${count === 1 ? '' : 's'} loaded for playback.`;
+    recordedStatus.textContent = recordedStatusNote ? `${base} ${recordedStatusNote}` : base;
+  }
+
+  function getRecordedFps(): number {
+    return recordedTrackSet?.fps || transportFps;
+  }
+
+  function transportFrameRate(): number {
+    return appState.get().trackingMode === 'recorded' ? getRecordedFps() : transportFps;
+  }
+
+  function autoSeedFpsBasis(): number {
+    // If this video already has a recorded set, keep generating drafts at that fps so playback,
+    // frame math, and trail window behavior stay consistent across manual/auto iterations.
+    return recordedTrackSet?.fps || transportFps;
+  }
+
+  function loadOrCreateRecordedTrackSet(url: string): void {
+    const videoId = deriveVideoId(url);
+    currentVideoId = videoId;
+    currentVideoUrl = url;
+    resetAutoSeedCapture();
+
+    const loaded = loadTrackSet(videoId, url, transportFps);
+    if (loaded) {
+      loaded.videoId = videoId;
+      loaded.videoUrl = url;
+      recordedTrackSet = loaded;
+      saveTrackSet(recordedTrackSet);
+    } else {
+      recordedTrackSet = createEmptyTrackSet(videoId, url, transportFps, 1.0);
+      saveTrackSet(recordedTrackSet);
+    }
+
+    recordedStatusNote = null;
+    recordedActiveTrack = 'A';
+    recordedActiveTrackSelect.value = 'A';
+    renderRecordedKeyframeList();
+
+    recordedJsonInput.value = '';
+    updateRecordedStatus();
+  }
+
+  function persistRecordedTrackSet(): void {
+    if (!recordedTrackSet) return;
+    saveTrackSet(recordedTrackSet);
+  }
+
+  function scheduleRecordedAutosave(): void {
+    if (!recordedTrackSet) return;
+
+    recordedStatusNote = 'Unsaved changes...';
+    updateRecordedStatus();
+
+    if (recordedSaveTimer !== null) {
+      window.clearTimeout(recordedSaveTimer);
+    }
+
+    recordedSaveTimer = window.setTimeout(() => {
+      persistRecordedTrackSet();
+      const stamp = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      recordedStatusNote = `Saved ${stamp}`;
+      updateRecordedStatus();
+      recordedSaveTimer = null;
+    }, RECORDED_AUTOSAVE_MS);
+  }
+
+  function captureAutoSeedSamples(frame: FrameData): void {
+    if (activeSource.kind !== 'video') return;
+    if (frame.trackingMode === 'recorded') return;
+    if (!activeSource.isPlaying()) return;
+    if (frame.detections.length === 0) return;
+
+    const mediaTime = video.currentTime;
+    if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
+
+    let capturedAny = false;
+
+    for (const det of frame.detections) {
+      const id: 'A' | 'B' = det.id === 'B' ? 'B' : 'A';
+      const ts = Number.isFinite(det.tip.timestamp) ? det.tip.timestamp : Number.NaN;
+      if (!Number.isFinite(ts)) continue;
+      if (lastAutoSeedTimestampByTrack[id] !== null && ts <= lastAutoSeedTimestampByTrack[id] + 1e-6) {
+        continue;
+      }
+      lastAutoSeedTimestampByTrack[id] = ts;
+
+      autoSeedSamples[id].push({
+        time: mediaTime,
+        x: det.tip.x,
+        y: det.tip.y,
+      });
+      capturedAny = true;
+    }
+
+    if (capturedAny) {
+      updateAutoSeedUi();
+    }
+  }
+
+  function generateRecordedDraftFromLive(): void {
+    if (activeSource.kind !== 'video') return;
+    if (appState.get().trackingMode === 'recorded') {
+      detectionStatus.textContent = 'Switch to Hand or Pose mode to capture a new draft.';
+      return;
+    }
+    if (!currentVideoId || !currentVideoUrl) {
+      detectionStatus.textContent = 'Load a video first.';
+      return;
+    }
+
+    let totalSamples = autoSeedSampleCount();
+    if (totalSamples === 0) {
+      const mediaTime = video.currentTime;
+      const currentDetections = mainLoop.getDetections();
+      if (Number.isFinite(mediaTime) && mediaTime >= 0 && currentDetections.length > 0) {
+        for (const det of currentDetections) {
+          const id: 'A' | 'B' = det.id === 'B' ? 'B' : 'A';
+          autoSeedSamples[id].push({
+            time: mediaTime,
+            x: det.tip.x,
+            y: det.tip.y,
+          });
+        }
+        totalSamples = autoSeedSampleCount();
+      }
+    }
+
+    if (totalSamples === 0) {
+      detectionStatus.textContent = 'No live samples captured yet. Play in Hand or Pose mode first.';
+      return;
+    }
+
+    const fps = autoSeedFpsBasis();
+    const aKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, fps);
+    const bKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, fps);
+
+    if (aKeyframes.length === 0 && bKeyframes.length === 0) {
+      detectionStatus.textContent = 'Captured samples were not usable as keyframes.';
+      return;
+    }
+
+    const existingKeyframes = recordedTrackSet ? keyframeCount(recordedTrackSet) : 0;
+    if (existingKeyframes > 0) {
+      const replace = window.confirm(
+        `Replace existing recorded keyframes (${existingKeyframes}) with generated draft ` +
+          `(A ${aKeyframes.length}, B ${bKeyframes.length})?`
+      );
+      if (!replace) return;
+    }
+
+    const base = recordedTrackSet ?? createEmptyTrackSet(currentVideoId, currentVideoUrl, fps, 1.0);
+    recordedTrackSet = {
+      ...base,
+      videoId: currentVideoId,
+      videoUrl: currentVideoUrl,
+      fps,
+      tracks: base.tracks.map((track) => {
+        if (track.id === 'A') return { ...track, keyframes: aKeyframes };
+        if (track.id === 'B') return { ...track, keyframes: bKeyframes };
+        return track;
+      }),
+    };
+
+    recordedStatusNote = `Auto-seeded draft: A ${aKeyframes.length}, B ${bKeyframes.length}.`;
+    recordedEditMode = false;
+    recordedEditToggle.checked = false;
+    updateRecordedEditorControlsVisibility();
+    updateEditOverlayInteractivity();
+    persistRecordedTrackSet();
+    renderRecordedKeyframeList();
+    updateRecordedStatus();
+    trailManager.clear();
+    mainLoop.clearDetections();
+
+    appState.update({ trackingMode: 'recorded' });
+
+    const minTime = Math.min(
+      ...(aKeyframes[0] ? [aKeyframes[0].time] : []),
+      ...(bKeyframes[0] ? [bKeyframes[0].time] : [])
+    );
+    const maxTime = Math.max(
+      ...(aKeyframes.length > 0 ? [aKeyframes[aKeyframes.length - 1].time] : []),
+      ...(bKeyframes.length > 0 ? [bKeyframes[bKeyframes.length - 1].time] : [])
+    );
+    const sampledDuration =
+      Number.isFinite(minTime) && Number.isFinite(maxTime) ? Math.max(0, maxTime - minTime) : 0;
+    detectionStatus.textContent =
+      `Generated draft: A ${aKeyframes.length}, B ${bKeyframes.length} keyframes` +
+      ` (${sampledDuration.toFixed(1)}s @ ${fps.toFixed(2)}fps)`;
+  }
+
+  function formatClock(seconds: number): string {
+    const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+    const minutes = Math.floor(safe / 60);
+    const sec = (safe % 60).toFixed(1).padStart(4, '0');
+    return `${minutes}:${sec}`;
+  }
+
+  function updateTransportFpsBadge(): void {
+    const fps = transportFps >= 100 ? transportFps.toFixed(0) : transportFps.toFixed(2).replace(/\.00$/, '');
+    transportFpsBtn.textContent = `${transportFpsApproximate ? '~' : ''}${fps} fps`;
+    transportFpsBtn.disabled = activeSource.kind !== 'video' || !currentVideoId;
+  }
+
+  function updateTransportUi(): void {
+    const inVideoMode = activeSource.kind === 'video';
+    const uiFps = transportFrameRate();
+    const hasDuration = Number.isFinite(video.duration) && video.duration > 0;
+    const duration = hasDuration ? video.duration : 0;
+    const currentFrame = frameIndex(video.currentTime, uiFps);
+    const maxFrame = Math.max(0, frameIndex(duration, uiFps));
+
+    transportSeek.min = '0';
+    transportSeek.max = String(Math.max(1, maxFrame));
+
+    if (!isDraggingSeek) {
+      transportSeek.value = String(Math.min(Math.max(currentFrame, 0), Math.max(1, maxFrame)));
+    }
+
+    const displayedFrame = isDraggingSeek ? seekDragFrame : currentFrame;
+    const displayedTime = isDraggingSeek
+      ? seekTimeForFrame(seekDragFrame, uiFps, duration)
+      : video.currentTime;
+
+    transportReadout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  f${displayedFrame}`;
+
+    transportPlayPauseBtn.textContent = video.paused || video.ended ? 'Play' : 'Pause';
+
+    const disabled = !inVideoMode || !hasDuration;
+    transportSeek.disabled = disabled;
+    transportPlayPauseBtn.disabled = disabled;
+    transportStepBackBtn.disabled = disabled;
+    transportStepForwardBtn.disabled = disabled;
+
+    const activeTrack = getRecordedTrack(recordedActiveTrack);
+    const hasRecordedTrackData =
+      appState.get().trackingMode === 'recorded' && !!activeTrack && activeTrack.keyframes.length > 0;
+    transportPrevKeyframeBtn.disabled = disabled || !hasRecordedTrackData;
+    transportNextKeyframeBtn.disabled = disabled || !hasRecordedTrackData;
+
+    updateTransportFpsBadge();
+  }
+
+  async function tryPlayVideo(): Promise<void> {
+    if (activeSource.kind !== 'video') return;
+    const hasSource = Boolean(video.currentSrc || video.src);
+    if (!hasSource) {
+      detectionStatus.textContent = 'Load a video URL first.';
+      return;
+    }
+
+    if (video.ended && Number.isFinite(video.duration) && video.duration > 0) {
+      const resumeTime = Math.max(0, video.duration - 1 / Math.max(1, transportFps));
+      video.currentTime = resumeTime;
+    }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user'
-        },
-        audio: false
-      });
-      video.srcObject = stream;
       await video.play();
-      isCameraRunning = true;
-      toggleCameraBtn.textContent = 'Stop Camera';
-      detectionStatus.textContent = isDetectorReady ? 'Running' : 'Loading model...';
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorName =
+        typeof err === 'object' && err !== null && 'name' in err
+          ? String((err as { name?: unknown }).name ?? '')
+          : '';
 
-      // Start the main loop if not already running
-      const hasActiveTrails = Array.from(trailManager.getFencers().values())
-        .some(f => f.trail.length > 0);
-      if (!hasActiveTrails) {
-        requestAnimationFrame(loop);
+      if (errorName === 'NotSupportedError' && currentVideoUrl) {
+        detectionStatus.textContent = 'Video source got stuck, reloading...';
+        try {
+          urlSource.setUrl(currentVideoUrl);
+          await urlSource.attach(video);
+          detectionStatus.textContent = video.paused ? 'Video reloaded - tap Play' : 'Video reloaded';
+          return;
+        } catch (reloadErr) {
+          console.error('Video reload after NotSupportedError failed:', reloadErr);
+        }
       }
+
+      console.error('Video play failed:', err);
+      if (message.includes('no supported sources') || message.includes('not supported')) {
+        detectionStatus.textContent = 'Video cannot play this source. Reload the URL.';
+      } else {
+        detectionStatus.textContent = `Playback failed: ${message}`;
+      }
+    }
+  }
+
+  function setTransportFps(fps: number, approximate: boolean): void {
+    if (!Number.isFinite(fps) || fps <= 0) return;
+    transportFps = fps;
+    transportFpsApproximate = approximate;
+    updateTransportUi();
+  }
+
+  async function detectTransportFps(url: string): Promise<void> {
+    if (activeSource.kind !== 'video') return;
+    const videoId = deriveVideoId(url);
+    currentVideoId = videoId;
+
+    const stored = loadFpsOverride(videoId);
+    if (stored) {
+      setTransportFps(stored, false);
+      return;
+    }
+
+    setTransportFps(DEFAULT_FRAME_RATE, true);
+    const detected = await detectVideoFrameRate(video, url);
+    if (currentVideoId !== videoId) return;
+    setTransportFps(detected.fps, detected.approximate);
+  }
+
+  function commitSeek(frame: number): void {
+    if (activeSource.kind !== 'video') return;
+    const uiFps = transportFrameRate();
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    video.currentTime = seekTimeForFrame(frame, uiFps, duration);
+  }
+
+  function stepFrames(deltaFrames: number): void {
+    if (activeSource.kind !== 'video') return;
+    const uiFps = transportFrameRate();
+    video.pause();
+    const nextFrame = frameIndex(video.currentTime, uiFps) + deltaFrames;
+    commitSeek(nextFrame);
+  }
+
+  function seekSeconds(deltaSeconds: number): void {
+    if (activeSource.kind !== 'video') return;
+    const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+    const next = Math.min(Math.max(0, video.currentTime + deltaSeconds), duration);
+    video.currentTime = next;
+  }
+
+  function scheduleScrubPreview(frame: number): void {
+    if (activeSource.kind !== 'video') return;
+
+    scrubPreviewFrame = frame;
+    if (scrubPreviewRaf !== null) return;
+
+    scrubPreviewRaf = window.requestAnimationFrame(() => {
+      scrubPreviewRaf = null;
+      video.pause();
+      commitSeek(scrubPreviewFrame);
+      updateTransportUi();
+    });
+  }
+
+  function flushScrubPreview(frame: number): void {
+    if (scrubPreviewRaf !== null) {
+      window.cancelAnimationFrame(scrubPreviewRaf);
+      scrubPreviewRaf = null;
+    }
+    video.pause();
+    commitSeek(frame);
+  }
+
+  function shouldIgnoreTransportShortcut(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false;
+    if (target instanceof HTMLTextAreaElement) return true;
+    if (target instanceof HTMLSelectElement) return true;
+    if (target instanceof HTMLInputElement) {
+      const type = target.type.toLowerCase();
+      return type !== 'range' && type !== 'button' && type !== 'checkbox' && type !== 'radio';
+    }
+    return target.getAttribute('contenteditable') === 'true';
+  }
+
+  function getRecordedTrack(trackId: 'A' | 'B') {
+    return recordedTrackSet?.tracks.find((track) => track.id === trackId) ?? null;
+  }
+
+  function replaceRecordedTrack(trackId: 'A' | 'B', nextTrack: NonNullable<ReturnType<typeof getRecordedTrack>>): void {
+    if (!recordedTrackSet) return;
+    recordedTrackSet.tracks = recordedTrackSet.tracks.map((track) =>
+      track.id === trackId ? nextTrack : track
+    );
+  }
+
+  function currentRecordedFrame(): number {
+    return frameIndex(video.currentTime, getRecordedFps());
+  }
+
+  function seekToRecordedFrame(frame: number): void {
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    video.currentTime = seekTimeForFrame(frame, getRecordedFps(), duration);
+  }
+
+  function stepRecordedFrames(delta: number): void {
+    video.pause();
+    seekToRecordedFrame(currentRecordedFrame() + delta);
+  }
+
+  function renderRecordedKeyframeList(): void {
+    recordedKeyframeList.innerHTML = '';
+
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) {
+      recordedKeyframeList.innerHTML = '<div class="hint">No active track.</div>';
+      updateTransportUi();
+      return;
+    }
+
+    const rows = listKeyframesWithFrames(track, getRecordedFps());
+    if (rows.length === 0) {
+      recordedKeyframeList.innerHTML = '<div class="hint">No keyframes yet.</div>';
+      updateTransportUi();
+      return;
+    }
+
+    for (const row of rows) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'recorded-keyframe-row';
+
+      const jump = document.createElement('button');
+      jump.type = 'button';
+      jump.className = 'recorded-keyframe-jump';
+      jump.dataset.frame = String(row.frame);
+      jump.textContent = `f${row.frame}  ${formatClock(row.time)}`;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'recorded-keyframe-delete';
+      del.dataset.frame = String(row.frame);
+      del.textContent = 'Del';
+
+      rowEl.appendChild(jump);
+      rowEl.appendChild(del);
+      recordedKeyframeList.appendChild(rowEl);
+    }
+
+    updateTransportUi();
+  }
+
+  function upsertActiveTrackKeyframe(x: number, y: number): void {
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return;
+
+    const nextTrack = upsertKeyframeAtFrame(
+      track,
+      currentRecordedFrame(),
+      x,
+      y,
+      getRecordedFps()
+    );
+    replaceRecordedTrack(recordedActiveTrack, nextTrack);
+    renderRecordedKeyframeList();
+    scheduleRecordedAutosave();
+  }
+
+  function deleteActiveTrackKeyframeAtCurrentFrame(): boolean {
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return false;
+
+    const frame = currentRecordedFrame();
+    const existing = keyframeAtFrame(track, frame, getRecordedFps());
+    if (!existing) return false;
+
+    const nextTrack = deleteKeyframeAtFrame(track, frame, getRecordedFps());
+    replaceRecordedTrack(recordedActiveTrack, nextTrack);
+    renderRecordedKeyframeList();
+    scheduleRecordedAutosave();
+    return true;
+  }
+
+  function jumpNeighborKeyframe(direction: -1 | 1): void {
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return;
+    const neighbors = nearestNeighborFrames(track, currentRecordedFrame(), getRecordedFps());
+    const target = direction < 0 ? neighbors.previous : neighbors.next;
+    if (!target) return;
+    video.pause();
+    seekToRecordedFrame(target.frame);
+  }
+
+  function applyRecordedAutoAdvance(): void {
+    if (recordedAutoAdvanceMode === 'next') {
+      jumpNeighborKeyframe(1);
+      return;
+    }
+    if (recordedAutoAdvanceMode > 0) {
+      stepRecordedFrames(recordedAutoAdvanceMode);
+    }
+  }
+
+  function drawDiamond(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.lineTo(x, y + size);
+    ctx.lineTo(x - size, y);
+    ctx.closePath();
+  }
+
+  function drawFencersDebugOverlay(overlayCanvas: HTMLCanvasElement, frame: FrameData): void {
+    if (frame.trackingMode !== 'fencers') return;
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+
+    for (const detection of frame.detections) {
+      if (!detection.refinement) continue;
+
+      const color = detection.id === 'B' ? '#ff4d5a' : '#36d67a';
+      const prior = mapToCanvas(detection.refinement.prior.x, detection.refinement.prior.y);
+      const refined = mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y);
+      const start = mapToCanvas(detection.refinement.searchStart.x, detection.refinement.searchStart.y);
+      const end = mapToCanvas(detection.refinement.searchEnd.x, detection.refinement.searchEnd.y);
+      const confidence = Math.round(detection.refinement.confidence * 100);
+      const label = `${detection.id} ${confidence}%`;
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.95;
+
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(prior.x, prior.y, 4, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(refined.x, refined.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, refined.x + 7, refined.y - 8);
+      ctx.restore();
+    }
+  }
+
+  function drawRecordedEditorOverlay(overlayCanvas: HTMLCanvasElement): void {
+    if (!isRecordedEditorActive() || !recordedTrackSet) return;
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const frame = currentRecordedFrame();
+    const fps = getRecordedFps();
+
+    const activeTrack = getRecordedTrack(recordedActiveTrack);
+    if (activeTrack) {
+      const activeNeighbors = nearestNeighborFrames(activeTrack, frame, fps);
+      const start = activeNeighbors.previous ?? activeNeighbors.current;
+      const end = activeNeighbors.next ?? activeNeighbors.current;
+      if (start && end && end.time > start.time) {
+        const points: Array<{ x: number; y: number }> = [];
+        const steps = 24;
+        for (let i = 0; i <= steps; i++) {
+          const t = start.time + ((end.time - start.time) * i) / steps;
+          const sample = sampleTrackAt(activeTrack, t, {
+            fps,
+            maxGapSeconds: recordedTrackSet.maxGapSeconds,
+          });
+          if (!sample) continue;
+          points.push(mapToCanvas(sample.x, sample.y));
+        }
+
+        if (points.length >= 2) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+      } else if (activeNeighbors.previous && activeNeighbors.next) {
+        const p = mapToCanvas(activeNeighbors.previous.x, activeNeighbors.previous.y);
+        const n = mapToCanvas(activeNeighbors.next.x, activeNeighbors.next.y);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(n.x, n.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (!activeNeighbors.current) {
+        const interpolated = sampleTrackAt(activeTrack, video.currentTime, {
+          fps,
+          maxGapSeconds: recordedTrackSet.maxGapSeconds,
+        });
+        if (interpolated) {
+          const point = mapToCanvas(interpolated.x, interpolated.y);
+          ctx.save();
+          ctx.fillStyle = activeTrack.color;
+          ctx.globalAlpha = 0.9;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
+    (['A', 'B'] as const).forEach((trackId) => {
+      const track = getRecordedTrack(trackId);
+      if (!track) return;
+
+      const neighbors = nearestNeighborFrames(track, frame, fps);
+      const items = [
+        { kind: 'previous' as const, keyframe: neighbors.previous },
+        { kind: 'next' as const, keyframe: neighbors.next },
+        { kind: 'current' as const, keyframe: neighbors.current },
+      ];
+
+      for (const item of items) {
+        if (!item.keyframe) continue;
+        const pos = mapToCanvas(item.keyframe.x, item.keyframe.y);
+        const isActiveTrack = trackId === recordedActiveTrack;
+        const alpha = isActiveTrack
+          ? item.kind === 'current'
+            ? 0.95
+            : item.kind === 'previous'
+              ? 0.72
+              : 0.56
+          : 0.35;
+        const size = item.kind === 'current' ? 7 : 5;
+
+        ctx.save();
+        ctx.fillStyle = track.color;
+        ctx.globalAlpha = alpha;
+        drawDiamond(ctx, pos.x, pos.y, size);
+        ctx.fill();
+
+        if (isActiveTrack && item.kind !== 'current') {
+          ctx.globalAlpha = 0.95;
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(item.kind === 'previous' ? 'P' : 'N', pos.x, pos.y - size - 3);
+        }
+
+        if (item.kind === 'current' && isActiveTrack) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, size + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    });
+  }
+
+  // ---- Source control ----
+  async function startCamera(): Promise<void> {
+    if (activeSource.kind !== 'camera' || activeSource.isAttached()) return;
+
+    try {
+      await activeSource.attach(video);
+      toggleCameraBtn.textContent = 'Stop Camera';
+      detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      updatePlaybackStatus();
+      mainLoop.start();
     } catch (err) {
       console.error('Failed to access camera:', err);
       detectionStatus.textContent = 'Camera access denied';
     }
   }
 
-  async function stopCamera(): Promise<void> {
-    if (!isCameraRunning) return;
+  function stopCamera(): void {
+    if (activeSource.kind !== 'camera' || !activeSource.isAttached()) return;
 
-    const stream = video.srcObject as MediaStream;
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-    }
-    video.srcObject = null;
-    isCameraRunning = false;
+    activeSource.detach();
     toggleCameraBtn.textContent = 'Start Camera';
-    detectionStatus.textContent = isDetectorReady ? 'Ready' : 'Loading model...';
+    detectionStatus.textContent = detector.isReady() ? 'Ready' : 'Loading model...';
+    updatePlaybackStatus();
   }
 
-  async function toggleCamera() {
-    if (isCameraRunning) {
-      await stopCamera();
+  async function toggleCamera(): Promise<void> {
+    if (activeSource.kind !== 'camera') return;
+    if (activeSource.isAttached()) stopCamera();
+    else await startCamera();
+  }
+
+  async function loadVideoFromInput(): Promise<void> {
+    if (activeSource.kind !== 'video') {
+      await switchSource('video');
+    }
+
+    const url = videoUrlInput.value.trim();
+    if (!url) {
+      detectionStatus.textContent = 'Paste a video URL first';
+      return;
+    }
+
+    urlSource.setUrl(url);
+    detectionStatus.textContent = 'Loading video...';
+
+    try {
+      await urlSource.attach(video);
+      setVideoQueryParam(url);
+      await detectTransportFps(url);
+      loadOrCreateRecordedTrackSet(url);
+      updatePlaybackStatus();
+      if (appState.get().trackingMode === 'recorded') {
+        detectionStatus.textContent = video.paused ? 'Recorded mode - tap Play' : 'Recorded mode';
+      } else if (video.paused) {
+        detectionStatus.textContent = 'Video loaded - tap Play';
+      } else {
+        detectionStatus.textContent = detector.isReady() ? 'Running' : 'Loading model...';
+      }
+      mainLoop.start();
+    } catch (err) {
+      console.error('Failed to load video URL:', err);
+      detectionStatus.textContent =
+        err instanceof UnsupportedVideoSourceError ? err.message : 'Failed to load video URL';
+      updatePlaybackStatus();
+    }
+  }
+
+  async function switchSource(kind: SourceKind, options: { autoLoadVideo?: boolean } = {}): Promise<void> {
+    const shouldAutoLoad = options.autoLoadVideo === true;
+    if (switchingSource) return;
+    if (activeSource.kind === kind && !shouldAutoLoad) return;
+
+    switchingSource = true;
+
+    try {
+      if (activeSource.isAttached()) {
+        activeSource.detach();
+      }
+
+      if (scrubPreviewRaf !== null) {
+        window.cancelAnimationFrame(scrubPreviewRaf);
+        scrubPreviewRaf = null;
+      }
+
+      if (recordedSaveTimer !== null) {
+        window.clearTimeout(recordedSaveTimer);
+        recordedSaveTimer = null;
+      }
+
+      trailManager.clear();
+      mainLoop.clearDetections();
+
+      if (kind === 'camera') {
+        currentVideoId = null;
+        currentVideoUrl = '';
+        resetAutoSeedCapture();
+        recordedTrackSet = null;
+        recordedStatusNote = null;
+        recordedEditMode = false;
+        recordedEditToggle.checked = false;
+        renderRecordedKeyframeList();
+        setTransportFps(DEFAULT_FRAME_RATE, true);
+        activeSource = cameraSource;
+        applySourcePresentation();
+        refreshOverlaySizing?.();
+        await startCamera();
+      } else {
+        currentVideoId = null;
+        currentVideoUrl = '';
+        resetAutoSeedCapture();
+        recordedTrackSet = null;
+        recordedStatusNote = null;
+        recordedEditMode = false;
+        recordedEditToggle.checked = false;
+        renderRecordedKeyframeList();
+        activeSource = urlSource;
+        applySourcePresentation();
+        refreshOverlaySizing?.();
+        detectionStatus.textContent = 'Video mode: paste URL and click Load';
+
+        if (shouldAutoLoad) {
+          await loadVideoFromInput();
+        }
+      }
+    } finally {
+      switchingSource = false;
+    }
+  }
+
+  // ---- UI events ----
+  menuToggle.addEventListener('click', () => {
+    controls.classList.toggle('collapsed');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (isRecordedEditorActive() && container.contains(e.target as Node)) {
+      return;
+    }
+    if (!controls.contains(e.target as Node) && !menuToggle.contains(e.target as Node)) {
+      controls.classList.add('collapsed');
+    }
+  });
+
+  sourceModeSelect.addEventListener('change', (e) => {
+    const kind = (e.target as HTMLSelectElement).value as SourceKind;
+    void switchSource(kind);
+  });
+
+  loadVideoBtn.addEventListener('click', () => {
+    void loadVideoFromInput();
+  });
+
+  recordedGenerateDraftBtn.addEventListener('click', () => {
+    generateRecordedDraftFromLive();
+  });
+
+  videoUrlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void loadVideoFromInput();
+    }
+  });
+
+  recordedImportPasteBtn.addEventListener('click', () => {
+    if (!currentVideoId || !currentVideoUrl) {
+      updateRecordedStatus('Load a video first.');
+      return;
+    }
+
+    const text = recordedJsonInput.value.trim();
+    if (!text) {
+      recordedImportFileInput.click();
+      return;
+    }
+
+    const imported = importTrackSetFromJson(text, currentVideoId, currentVideoUrl, transportFps);
+    if (!imported) {
+      updateRecordedStatus('Import failed: invalid track-set JSON.');
+      return;
+    }
+
+    imported.videoId = currentVideoId;
+    imported.videoUrl = currentVideoUrl;
+    imported.fps = imported.fps || transportFps;
+    recordedTrackSet = imported;
+    recordedStatusNote = null;
+    persistRecordedTrackSet();
+    renderRecordedKeyframeList();
+    trailManager.clear();
+    mainLoop.clearDetections();
+    updateRecordedStatus('Imported recorded track set.');
+  });
+
+  recordedImportFileInput.addEventListener('change', async () => {
+    if (!currentVideoId || !currentVideoUrl) {
+      updateRecordedStatus('Load a video first.');
+      recordedImportFileInput.value = '';
+      return;
+    }
+
+    const file = recordedImportFileInput.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const imported = importTrackSetFromJson(text, currentVideoId, currentVideoUrl, transportFps);
+    recordedImportFileInput.value = '';
+    if (!imported) {
+      updateRecordedStatus('Import failed: invalid file JSON.');
+      return;
+    }
+
+    imported.videoId = currentVideoId;
+    imported.videoUrl = currentVideoUrl;
+    imported.fps = imported.fps || transportFps;
+    recordedTrackSet = imported;
+    recordedStatusNote = null;
+    persistRecordedTrackSet();
+    renderRecordedKeyframeList();
+    trailManager.clear();
+    mainLoop.clearDetections();
+    updateRecordedStatus(`Imported ${file.name}.`);
+  });
+
+  recordedExportJsonBtn.addEventListener('click', () => {
+    if (!recordedTrackSet || !currentVideoId) {
+      updateRecordedStatus('Nothing to export yet.');
+      return;
+    }
+
+    const payload = exportTrackSetToJson(recordedTrackSet);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = exportFilenameForVideo(currentVideoUrl, currentVideoId);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+    updateRecordedStatus('Exported recorded track set.');
+  });
+
+  recordedEditToggle.addEventListener('change', () => {
+    recordedEditMode = recordedEditToggle.checked;
+    updateRecordedEditorControlsVisibility();
+    updateEditOverlayInteractivity();
+  });
+
+  recordedActiveTrackSelect.addEventListener('change', (e) => {
+    recordedActiveTrack = (e.target as HTMLSelectElement).value === 'B' ? 'B' : 'A';
+    renderRecordedKeyframeList();
+  });
+
+  recordedAutoAdvanceSelect.addEventListener('change', (e) => {
+    const next = parseRecordedAutoAdvanceMode((e.target as HTMLSelectElement).value);
+    if (next !== null) {
+      recordedAutoAdvanceMode = next;
+      localStorage.setItem(RECORDED_AUTO_ADVANCE_STORAGE_KEY, String(next));
+    }
+  });
+
+  recordedDeleteFrameBtn.addEventListener('click', () => {
+    if (!isRecordedEditorActive()) return;
+    if (deleteActiveTrackKeyframeAtCurrentFrame()) {
+      updateRecordedStatus('Deleted keyframe at current frame.');
+    }
+  });
+
+  recordedClearTrackBtn.addEventListener('click', () => {
+    if (!isRecordedEditorActive() || !recordedTrackSet) return;
+    const label = recordedActiveTrack === 'A' ? 'Track A (green)' : 'Track B (red)';
+    if (!window.confirm(`Clear all keyframes from ${label}?`)) return;
+    const track = getRecordedTrack(recordedActiveTrack);
+    if (!track) return;
+    replaceRecordedTrack(recordedActiveTrack, { ...track, keyframes: [] });
+    renderRecordedKeyframeList();
+    scheduleRecordedAutosave();
+    updateRecordedStatus(`Cleared ${label}.`);
+  });
+
+  recordedKeyframeList.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const frame = Number.parseInt(target.dataset.frame ?? '', 10);
+    if (!Number.isFinite(frame)) return;
+
+    if (target.classList.contains('recorded-keyframe-jump')) {
+      video.pause();
+      seekToRecordedFrame(frame);
+      return;
+    }
+
+    if (target.classList.contains('recorded-keyframe-delete')) {
+      const track = getRecordedTrack(recordedActiveTrack);
+      if (!track) return;
+      replaceRecordedTrack(recordedActiveTrack, deleteKeyframeAtFrame(track, frame, getRecordedFps()));
+      renderRecordedKeyframeList();
+      scheduleRecordedAutosave();
+    }
+  });
+
+  trackingModeSelect.addEventListener('change', (e) => {
+    if (!detector.isSwitching()) {
+      const mode = (e.target as HTMLSelectElement).value as TrackingMode;
+      if (mode === 'recorded' && activeSource.kind !== 'video') {
+        trackingModeSelect.value = appState.get().trackingMode;
+        return;
+      }
+      appState.update({ trackingMode: mode });
+    }
+  });
+
+  fencersDebugOverlayInput.addEventListener('change', () => {
+    showFencersDebugOverlay = fencersDebugOverlayInput.checked;
+  });
+
+  debugModeSelect.addEventListener('change', (e) => {
+    appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
+  });
+
+  trailLengthInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value);
+    trailLengthValue.textContent = value.toString();
+    appState.update({ trailLength: value });
+  });
+
+  inferenceRateInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value);
+    inferenceRateValue.textContent = value.toString();
+    appState.update({ inferenceFps: value });
+  });
+
+  glowIntensityInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    glowIntensityValue.textContent = value.toFixed(1);
+    appState.update({ glowIntensity: value });
+  });
+
+  poseTipExtensionInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    poseTipExtensionValue.textContent = value.toFixed(1);
+    appState.update({ poseTipExtension: value });
+  });
+
+  effectModeSelect.addEventListener('change', (e) => {
+    appState.update({ effectMode: (e.target as HTMLSelectElement).value as EffectMode });
+  });
+
+  clearTrailsBtn.addEventListener('click', () => {
+    trailManager.clear();
+  });
+
+  toggleCameraBtn.addEventListener('click', () => {
+    void toggleCamera();
+  });
+
+  overlay.addEventListener('click', (e) => {
+    if (!isRecordedEditorActive()) return;
+
+    video.pause();
+    const norm = mapToNormalized(e.clientX, e.clientY);
+    upsertActiveTrackKeyframe(norm.x, norm.y);
+    applyRecordedAutoAdvance();
+  });
+
+  transportPlayPauseBtn.addEventListener('click', async () => {
+    if (activeSource.kind !== 'video') return;
+    if (video.paused || video.ended) {
+      await tryPlayVideo();
+    } else {
+      video.pause();
+    }
+    updateTransportUi();
+  });
+
+  transportStepBackBtn.addEventListener('click', () => {
+    stepFrames(-1);
+  });
+
+  transportStepForwardBtn.addEventListener('click', () => {
+    stepFrames(1);
+  });
+
+  transportPrevKeyframeBtn.addEventListener('click', () => {
+    jumpNeighborKeyframe(-1);
+  });
+
+  transportNextKeyframeBtn.addEventListener('click', () => {
+    jumpNeighborKeyframe(1);
+  });
+
+  transportSeek.addEventListener('pointerdown', () => {
+    isDraggingSeek = true;
+  });
+
+  transportSeek.addEventListener('input', (e) => {
+    const frame = parseInt((e.target as HTMLInputElement).value, 10);
+    seekDragFrame = Number.isFinite(frame) ? frame : 0;
+    isDraggingSeek = true;
+    scheduleScrubPreview(seekDragFrame);
+    updateTransportUi();
+  });
+
+  const commitSeekFromSlider = () => {
+    const frame = parseInt(transportSeek.value, 10);
+    isDraggingSeek = false;
+    flushScrubPreview(Number.isFinite(frame) ? frame : 0);
+    updateTransportUi();
+  };
+
+  transportSeek.addEventListener('change', commitSeekFromSlider);
+  transportSeek.addEventListener('pointerup', commitSeekFromSlider);
+
+  transportFpsBtn.addEventListener('click', () => {
+    if (!currentVideoId) return;
+    const response = window.prompt('Override FPS for this video', transportFps.toFixed(2));
+    if (response === null) return;
+    const parsed = Number.parseFloat(response.trim());
+    if (!Number.isFinite(parsed) || parsed <= 1 || parsed > 240) return;
+    saveFpsOverride(currentVideoId, parsed);
+    setTransportFps(parsed, false);
+    if (recordedTrackSet) {
+      recordedTrackSet.fps = parsed;
+      persistRecordedTrackSet();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (activeSource.kind !== 'video') return;
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (shouldIgnoreTransportShortcut(e.target)) return;
+
+    const inRecordedMode = appState.get().trackingMode === 'recorded';
+
+    if (inRecordedMode) {
+      if (e.key === '[' || e.key === ',' || e.key === 'PageUp') {
+        e.preventDefault();
+        jumpNeighborKeyframe(-1);
+        return;
+      }
+      if (e.key === ']' || e.key === '.' || e.key === 'PageDown') {
+        e.preventDefault();
+        jumpNeighborKeyframe(1);
+        return;
+      }
+    }
+
+    if (isRecordedEditorActive()) {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteActiveTrackKeyframeAtCurrentFrame();
+        return;
+      }
+    }
+
+    switch (e.key) {
+      case ' ': {
+        e.preventDefault();
+        void (async () => {
+          if (video.paused || video.ended) await tryPlayVideo();
+          else video.pause();
+          updateTransportUi();
+        })();
+        break;
+      }
+      case 'ArrowLeft': {
+        e.preventDefault();
+        if (e.shiftKey) seekSeconds(-1);
+        else stepFrames(-1);
+        break;
+      }
+      case 'ArrowRight': {
+        e.preventDefault();
+        if (e.shiftKey) seekSeconds(1);
+        else stepFrames(1);
+        break;
+      }
+      case 'Home': {
+        e.preventDefault();
+        video.currentTime = 0;
+        break;
+      }
+      case 'End': {
+        if (Number.isFinite(video.duration)) {
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.duration);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  });
+
+  video.addEventListener('seeking', () => {
+    if (activeSource.kind === 'video') {
+      trailManager.clear();
+      mainLoop.clearDetections();
+    }
+  });
+
+  const playbackEvents = [
+    'loadedmetadata',
+    'loadeddata',
+    'durationchange',
+    'timeupdate',
+    'play',
+    'pause',
+    'seeking',
+    'seeked',
+    'ended',
+    'resize',
+  ];
+  for (const eventName of playbackEvents) {
+    video.addEventListener(eventName, updatePlaybackStatus);
+  }
+
+  // ---- Start ----
+  async function init() {
+    applySourcePresentation();
+    renderRecordedKeyframeList();
+    refreshOverlaySizing = installOverlaySizing(video, overlay, [trailRenderer, debugRenderer]);
+
+    await detector.load(appState.get().trackingMode);
+
+    const initialVideoUrl = new URL(window.location.href).searchParams.get('video')?.trim() ?? '';
+    if (initialVideoUrl) {
+      videoUrlInput.value = initialVideoUrl;
+      urlSource.setUrl(initialVideoUrl);
+      await switchSource('video', { autoLoadVideo: true });
     } else {
       await startCamera();
     }
   }
 
-  // Main loop
-  async function loop(timestamp: number) {
-    // Calculate FPS
-    frameCount++;
-    if (timestamp - lastFpsTime >= 1000) {
-      fpsCounter.textContent = `${frameCount} fps`;
-      frameCount = 0;
-      lastFpsTime = timestamp;
-    }
-
-    // Detection (throttled, only when camera is running)
-    if (isCameraRunning && timestamp - lastDetectionTime >= detectionInterval) {
-      if (isDetectorReady && video.readyState >= 2) {
-        try {
-          currentDetections = await detect(video, timestamp);
-          const tips = new Map(currentDetections.map(d => [d.id, d.tip]));
-          trailManager.updateTips(tips, timestamp);
-
-          // Check for clash (tips close together)
-          if (currentDetections.length >= 2) {
-            const tip1 = currentDetections[0].tip;
-            const tip2 = currentDetections[1].tip;
-            const dx = tip1.x - tip2.x;
-            const dy = tip1.y - tip2.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-
-            if (distance < CLASH_DISTANCE && timestamp - lastClashTime > CLASH_COOLDOWN) {
-              // Trigger flash effect
-              effectManager.addEffect(new FlashEffect(1600));
-              lastClashTime = timestamp;
-            }
-          }
-          
-
-        } catch (err) {
-          console.error('Detection error:', err);
-        }
-      }
-      lastDetectionTime = timestamp;
-    }
-
-    // If camera is off, fade trails gradually
-    if (!isCameraRunning) {
-      trailManager.fadeAllTrails();
-    }
-
-    // Rendering (60fps) - always render to show fading trails
-    render(timestamp);
-
-    // Continue loop if camera is running OR if trails are still visible
-    const hasActiveTrails = Array.from(trailManager.getFencers().values())
-      .some(f => f.trail.length > 0);
-
-    if (isCameraRunning || hasActiveTrails) {
-      lastRenderTime = timestamp;
-      requestAnimationFrame(loop);
-    }
-  }
-
-  function render(timestamp: number) {
-    // Clear canvas (but preserve effects which draw on top)
-    trailRenderer.clear();
-
-    // Continue fading trails even when camera is off
-    if (!isCameraRunning) {
-      trailManager.fadeAllTrails();
-    }
-
-    const fencers = trailManager.getFencers();
-
-    // Render based on debug mode
-    switch (debugMode) {
-      case 'none':
-        trailRenderer.renderTrails(fencers);
-        trailRenderer.renderTipDots(fencers);
-        break;
-
-      case 'landmarks':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ff00');
-          });
-        } else {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ffff');
-          });
-        }
-        break;
-
-      case 'skeleton':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderSkeleton(detection.landmarks, POSE_CONNECTIONS, fencer?.color ?? '#00ff00');
-          });
-        } else {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderSkeleton(detection.landmarks, HAND_CONNECTIONS, fencer?.color ?? '#00ffff');
-          });
-        }
-        break;
-
-      case 'vectors':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const lm = detection.landmarks;
-            const wrist = lm[POSE_LANDMARKS.RIGHT_WRIST];
-            const elbow = lm[POSE_LANDMARKS.RIGHT_ELBOW];
-            if (wrist && elbow && detection.tip) {
-              const fencer = fencers.get(detection.id);
-              if (fencer) {
-                // Use new hand-starting vector for Pose mode
-                debugRenderer.renderVectors(wrist, elbow, detection.tip, fencer.color, true);
-              }
-            }
-          });
-        } else {
-          const ctx = overlay.getContext('2d')!;
-          
-          ctx.save();
-          currentDetections.forEach(detection => {
-            const lm = detection.landmarks;
-            const wrist = lm[HAND_LANDMARKS.WRIST];
-            const indexMcp = lm[HAND_LANDMARKS.INDEX_FINGER_MCP];
-            const tip = lm[HAND_LANDMARKS.INDEX_FINGER_TIP];
-            const fencer = fencers.get(detection.id);
-            
-            if (wrist && indexMcp && tip && fencer) {
-              // Use mapToCanvas for coordinate transformation
-              const wristPos = mapToCanvas(wrist.x, wrist.y);
-              const mcpPos = mapToCanvas(indexMcp.x, indexMcp.y);
-              const tipPos = mapToCanvas(tip.x, tip.y);
-              
-              ctx.strokeStyle = '#ffff00';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.moveTo(wristPos.x, wristPos.y);
-              ctx.lineTo(mcpPos.x, mcpPos.y);
-              ctx.stroke();
-              
-              ctx.strokeStyle = fencer.color;
-              ctx.setLineDash([5, 5]);
-              ctx.beginPath();
-              ctx.moveTo(mcpPos.x, mcpPos.y);
-              ctx.lineTo(tipPos.x, tipPos.y);
-              ctx.stroke();
-              ctx.setLineDash([]);
-              
-              ctx.fillStyle = fencer.color;
-              ctx.beginPath();
-              ctx.arc(tipPos.x, tipPos.y, 6, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          });
-          ctx.restore();
-        }
-        
-        // Draw calibration grid in vectors mode to help diagnose alignment
-        drawCalibrationGrid();
-        break;
-
-      case 'tips-only':
-        trailRenderer.renderTipDots(fencers);
-        break;
-
-      case 'trails-only':
-        trailRenderer.renderTrailsOnly(fencers);
-        break;
-
-      case 'lightsaber':
-        currentDetections.forEach(detection => {
-          const fencer = fencers.get(detection.id);
-          if (!fencer) return;
-          
-          if (trackingMode === 'pose') {
-            const wrist = detection.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
-            if (wrist && detection.tip) {
-              debugRenderer.renderLightsaber(wrist, detection.tip, fencer.color);
-            }
-          } else {
-            const indexMcp = detection.landmarks[HAND_LANDMARKS.INDEX_FINGER_MCP];
-            if (indexMcp && detection.tip) {
-              debugRenderer.renderLightsaber(indexMcp, detection.tip, fencer.color);
-            }
-          }
-        });
-        break;
-
-      case 'heatmap':
-        trailRenderer.renderTrails(fencers);
-        break;
-
-      case 'all':
-        if (trackingMode === 'pose') {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ff00');
-            debugRenderer.renderSkeleton(detection.landmarks, POSE_CONNECTIONS, fencer?.color ?? '#00ff00');
-          });
-        } else {
-          currentDetections.forEach(detection => {
-            const fencer = fencers.get(detection.id);
-            debugRenderer.renderLandmarks(detection.landmarks, fencer?.color ?? '#00ffff');
-            debugRenderer.renderSkeleton(detection.landmarks, HAND_CONNECTIONS, fencer?.color ?? '#00ffff');
-          });
-        }
-        trailRenderer.renderTrails(fencers);
-        trailRenderer.renderTipDots(fencers);
-        break;
-    }
-
-    // Render any active effects on top
-    // Ensure valid canvas dimensions
-    const effectWidth = Math.max(1, overlay.width);
-    const effectHeight = Math.max(1, overlay.height);
-    effectManager.updateAndRender(timestamp, effectWidth, effectHeight);
-  }
-
-  // Draw calibration grid for debugging alignment issues
-  function drawCalibrationGrid() {
-    const ctx = overlay.getContext('2d')!;
-    const width = overlay.width;
-    const height = overlay.height;
-    
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    
-    // Draw 10% grid lines
-    for (let i = 1; i < 10; i++) {
-      const x = (width * i) / 10;
-      const y = (height * i) / 10;
-      
-      // Vertical lines
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      
-      // Horizontal lines
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-    
-    // Draw corner markers at mapped video corners
-    const tl = mapToCanvas(0, 0);
-    const tr = mapToCanvas(1, 0);
-    const bl = mapToCanvas(0, 1);
-    const br = mapToCanvas(1, 1);
-    
-    ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([]);
-    
-    // Draw video bounds
-    ctx.beginPath();
-    ctx.moveTo(tl.x, tl.y);
-    ctx.lineTo(tr.x, tr.y);
-    ctx.lineTo(br.x, br.y);
-    ctx.lineTo(bl.x, bl.y);
-    ctx.closePath();
-    ctx.stroke();
-    
-    // Draw corner markers
-    const corners = [tl, tr, bl, br];
-    corners.forEach((corner, i) => {
-      ctx.fillStyle = '#00ffff';
-      ctx.beginPath();
-      ctx.arc(corner.x, corner.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Label
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '12px monospace';
-      const labels = ['TL', 'TR', 'BL', 'BR'];
-      ctx.fillText(labels[i], corner.x + 10, corner.y - 10);
-    });
-    
-    ctx.restore();
-  }
-
-  // Start initialization
-  init();
+  void init();
 </script>
 
 <style>
-  /* Use 100dvh for dynamic viewport height - handles mobile address bar properly */
   #container {
     width: 100%;
-    height: 100vh; /* Fallback */
-    height: 100dvh; /* Modern browsers */
-    height: -webkit-fill-available; /* iOS Safari fallback */
+    height: 100vh;
+    height: 100dvh;
+    height: -webkit-fill-available;
     display: flex;
     justify-content: center;
     align-items: center;
     background: #000;
-    position: fixed; /* Use fixed to ensure full coverage */
+    position: fixed;
     top: 0;
     left: 0;
     overflow: hidden;
@@ -797,259 +1674,33 @@ import Layout from '../layouts/Layout.astro';
     left: 0;
     width: 100%;
     height: 100%;
+  }
+
+  .video-element.fit-cover {
     object-fit: cover;
+  }
+
+  .video-element.fit-contain {
+    object-fit: contain;
+  }
+
+  .video-element.mirrored {
     transform: scaleX(-1);
   }
 
   .overlay-canvas {
     position: absolute;
     pointer-events: none;
-    transform: scaleX(-1);
     width: 100%;
     height: 100%;
   }
 
-  /* Hamburger Menu Toggle */
-  #menuToggle {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    width: 50px;
-    height: 50px;
-    background: linear-gradient(180deg, rgba(40, 40, 40, 0.6) 0%, rgba(0, 0, 0, 0.6) 100%);
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 6px;
-    z-index: 1001;
-    transition: background 0.3s ease;
+  .overlay-canvas.edit-mode {
+    pointer-events: auto;
+    cursor: crosshair;
   }
 
-  #menuToggle:hover {
-    background: linear-gradient(180deg, rgba(60, 60, 60, 0.7) 0%, rgba(20, 20, 20, 0.7) 100%);
-  }
-
-  #menuToggle span {
-    width: 30px;
-    height: 3px;
-    background: white;
-    border-radius: 2px;
-    transition: all 0.3s ease;
-  }
-
-  /* Controls Panel */
-  #controls {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: linear-gradient(180deg, rgba(45, 45, 45, 0.75) 0%, rgba(0, 0, 0, 0.75) 100%);
-    backdrop-filter: blur(10px);
-    padding: 25px;
-    border-radius: 12px;
-    color: white;
-    min-width: 280px;
-    max-height: calc(100vh - 100px);
-    overflow-y: auto;
-    transition: transform 0.3s ease, opacity 0.3s ease;
-    z-index: 1000;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  #controls.collapsed {
-    transform: translateX(calc(100% + 40px));
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  h1 {
-    margin: 35px 0 20px 0;
-    font-size: 1.75rem;
-    font-weight: 600;
-    text-align: center;
-    color: white;
-  }
-
-  .control-group {
-    margin-bottom: 18px;
-  }
-
-  .control-group:last-child {
-    margin-bottom: 0;
-  }
-
-  label {
-    display: block;
-    font-size: 0.9rem;
-    font-weight: 500;
-    margin-bottom: 6px;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  select, input[type="range"] {
-    width: 100%;
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
-    font-size: 0.9rem;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  select:focus, input:focus {
-    outline: none;
-    border-color: rgba(255, 255, 255, 0.4);
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  select option {
-    background: #1a1a1a;
-    color: white;
-  }
-
-  input[type="range"] {
-    padding: 0;
-    height: 6px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
-    cursor: pointer;
-  }
-
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: white;
-    cursor: pointer;
-    transition: transform 0.2s ease;
-  }
-
-  input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: white;
-    cursor: pointer;
-    border: none;
-  }
-
-  .hint {
-    display: block;
-    font-size: 0.75rem;
-    color: rgba(255, 255, 255, 0.5);
-    margin-top: 4px;
-    font-style: italic;
-  }
-
-  .advanced-controls {
-    margin: 15px 0;
-    padding: 10px 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .advanced-controls summary {
-    cursor: pointer;
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.6);
-    user-select: none;
-    transition: color 0.2s ease;
-  }
-
-  .advanced-controls summary:hover {
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .advanced-controls[open] summary {
-    margin-bottom: 15px;
-  }
-
-  .button-group {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  button {
-    width: 100%;
-    padding: 12px;
-    border-radius: 8px;
-    border: 2px solid transparent;
-    font-size: 0.95rem;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-primary {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.3);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    background: rgba(255, 255, 255, 0.2);
-    border-color: rgba(255, 255, 255, 0.5);
-    transform: translateY(-1px);
-  }
-
-  .btn-secondary {
-    background: transparent;
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  .status {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 18px;
-    padding-top: 15px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    font-size: 0.8rem;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  #fpsCounter {
-    font-family: monospace;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  /* Scrollbar styling for controls panel */
-  #controls::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  #controls::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 3px;
-  }
-
-  #controls::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
-  }
-
-  #controls::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+  .overlay-canvas.mirrored {
+    transform: scaleX(-1);
   }
 </style>

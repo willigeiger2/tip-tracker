@@ -4,11 +4,16 @@
 import type { Landmark, TipPosition, TipEstimator, Pose } from '../types/fencing';
 import { LANDMARKS } from './detector';
 
-// Default extension multiplier (3x forearm length for longer sword tip)
-const DEFAULT_EXTENSION = 3.0;
+// Default extension multiplier tuned for current fencing footage.
+const DEFAULT_EXTENSION = 4.2;
+let poseTipExtension = DEFAULT_EXTENSION;
 
 // Minimum confidence threshold for landmarks
 const MIN_CONFIDENCE = 0.5;
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
 /**
  * Default tip estimator: extends forearm vector by multiplier
@@ -17,7 +22,7 @@ const MIN_CONFIDENCE = 0.5;
 export const defaultEstimator: TipEstimator = (
   wrist: Landmark,
   elbow: Landmark,
-  shoulder?: Landmark
+  _shoulder?: Landmark
 ): { x: number; y: number; confidence: number } => {
   // Vector from elbow to wrist (forearm direction)
   const dx = wrist.x - elbow.x;
@@ -40,11 +45,11 @@ export const defaultEstimator: TipEstimator = (
   const dirY = dy / forearmLength;
   
   // Extend from wrist by forearm length * multiplier
-  const extension = forearmLength * DEFAULT_EXTENSION;
+  const extension = forearmLength * poseTipExtension;
   
   return {
-    x: wrist.x + dirX * extension,
-    y: wrist.y + dirY * extension,
+    x: clamp01(wrist.x + dirX * extension),
+    y: clamp01(wrist.y + dirY * extension),
     confidence: Math.min(wrist.visibility, elbow.visibility),
   };
 };
@@ -72,7 +77,7 @@ export const perspectiveEstimator: TipEstimator = (
   
   // Adjust extension based on arm length (proxy for distance from camera)
   const scaleFactor = armLength / 0.3; // normalize to expected arm length
-  const adjustedExtension = DEFAULT_EXTENSION * scaleFactor;
+  const adjustedExtension = poseTipExtension * scaleFactor;
   
   const dx = wrist.x - elbow.x;
   const dy = wrist.y - elbow.y;
@@ -83,14 +88,23 @@ export const perspectiveEstimator: TipEstimator = (
   const extension = forearmLength * adjustedExtension;
   
   return {
-    x: wrist.x + dirX * extension,
-    y: wrist.y + dirY * extension,
+    x: clamp01(wrist.x + dirX * extension),
+    y: clamp01(wrist.y + dirY * extension),
     confidence: Math.min(wrist.visibility, elbow.visibility, shoulder.visibility),
   };
 };
 
 // Current active estimator - can be swapped at runtime
 let activeEstimator: TipEstimator = defaultEstimator;
+
+export function getPoseTipExtension(): number {
+  return poseTipExtension;
+}
+
+export function setPoseTipExtension(multiplier: number): void {
+  if (!Number.isFinite(multiplier)) return;
+  poseTipExtension = Math.max(1.0, Math.min(8.0, multiplier));
+}
 
 /**
  * Set the active tip estimator function
@@ -141,7 +155,8 @@ export function estimateTip(
   return {
     x: result.x,
     y: result.y,
-    z: wrist.z, // Include depth for 3D effects
+    // Pose-derived depth is noisy for fencing; keep pose/fencers rendering stable.
+    z: 0,
     confidence: result.confidence,
     timestamp,
     side,

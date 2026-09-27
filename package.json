@@ -6,23 +6,29 @@
 		"node": ">=22.12.0"
 	},
 	"scripts": {
+		"postinstall": "node scripts/copy-mediapipe-wasm.mjs",
+		"predev": "node scripts/copy-mediapipe-wasm.mjs",
+		"prebuild": "node scripts/copy-mediapipe-wasm.mjs",
 		"dev": "astro dev",
 		"build": "astro build",
 		"preview": "astro build && astro preview",
 		"astro": "astro",
+		"check": "astro check",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"generate-types": "wrangler types",
 		"deploy": "astro build && wrangler deploy",
 		"cf-typegen": "wrangler types"
 	},
 	"dependencies": {
-		"@astrojs/cloudflare": "^13.2.1",
-		"@mediapipe/tasks-vision": "^0.10.34",
-		"astro": "^6.1.9"
+		"@astrojs/cloudflare": "^14.3.3",
+		"@mediapipe/tasks-vision": "^0.10.35",
+		"astro": "^7.3.5"
 	},
 	"devDependencies": {
-		"wrangler": "^4.85.0"
-	},
-	"overrides": {
-		"vite": "^7"
+		"@astrojs/check": "^0.9.10",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.11",
+		"wrangler": "^4.139.0"
 	}
 }

@@ -1,7 +1,7 @@
 # Tip Track - Video Mode & Recorded Tracking Plan
 
 **Created**: 2026-09-24
-**Status**: Planning complete, no steps started
+**Status**: Step 6 in progress (auto-seed editable draft implementation ready for manual test)
 **Baseline commit**: `1842306` (main)
 **Related docs**: `TIP_TRACK_PLAN.md` (original architecture), `TIP_TRACK_RESUME.md` (session notes)
 
@@ -38,9 +38,11 @@ Validity matrix:
 
 These were agreed before planning. Change them here first if they need to change.
 
-1. **Dependencies**: minor bumps only in step 1 (astro 6.4.x, @astrojs/cloudflare 13.7.x,
-   @mediapipe/tasks-vision 0.10.35, wrangler 4.138). Majors (Astro 7, adapter 14, MediaPipe 1.0)
-   are out of scope for this plan.
+1. **Dependencies**: ~~minor bumps only~~ **Revised 2026-09-24**: Astro 7.3.x + @astrojs/cloudflare
+   14.3.x + vite 8 (the `vite: ^7` override had to go). Rationale: `npm audit` reported 4
+   advisories fixable only in Astro 7 and Astro 6 no longer receives security fixes; the upgrade
+   proved clean (check/build/dev pass, 0 vulnerabilities). MediaPipe stays on 0.10.35; MediaPipe
+   1.0 remains out of scope.
 2. **Refactor**: step 1 includes a dedicated restructuring pass of `index.astro` into modules
    *before* feature work, with unit tests pinning behavior where practical.
 3. **HLS playback**: native `<video>` HLS with feature detection. Chrome 142+ and Safari play HLS
@@ -96,6 +98,9 @@ Constraints that apply to every step:
   local notes, not in the repo.
 - The AI cannot drive a browser. Anything visual is verified by Willi via the checklist; the AI
   verifies typecheck, tests, build, and API behavior via `curl` against `astro dev`.
+- **Willi starts and stops the dev server.** The AI never launches `astro dev` (or any long-running
+  server) itself; when it needs a live server for `curl` checks it asks, states the port it
+  expects, and says when it is finished.
 
 ## 5. Target architecture (after step 1)
 
@@ -113,6 +118,8 @@ src/
 │   │   ├── main-loop.ts         # rAF loop lifecycle; schedules detection; dispatches render
 │   │   ├── coordinate-mapper.ts # video<->screen mapping; fit: cover|contain; mirror flag (pure)
 │   │   ├── render-modes.ts      # the debugMode switch, extracted from index.astro
+│   │   ├── overlay-sizing.ts    # overlay canvas <-> viewport sync incl. iOS delayed-resize quirks
+│   │   ├── detector-controller.ts # load/switch MediaPipe models; ready/switching flags
 │   │   └── sources/
 │   │       ├── source.ts        # VideoSource interface (attach/detach/kind/mirrored/fit/isPlaying)
 │   │       ├── camera-source.ts # getUserMedia (today's startCamera/stopCamera)
@@ -134,6 +141,7 @@ src/
 
 The bootstrap in `index.astro` should end up ~150 lines: get DOM elements, construct state +
 sources + loop, bind UI events to state changes. All behavior lives in `src/lib`.
+(Step 1 result: 186-line script, of which ~40 are DOM lookups and ~60 are one-line event bindings.)
 
 ---
 
@@ -148,31 +156,31 @@ behavior change.**
 
 Tasks:
 
-- [ ] Dependencies (minor only): `astro@^6.4`, `@astrojs/cloudflare@^13.7`,
+- [x] Dependencies: `astro@^7.3`, `@astrojs/cloudflare@^14.3` (vite 8; `overrides.vite` removed),
       `@mediapipe/tasks-vision@0.10.35`, `wrangler@^4.138`. Regenerate `worker-configuration.d.ts`
-      (`npm run cf-typegen`). Review `npm audit`.
-- [ ] Typecheck: add `@astrojs/check` + `typescript`; script `"check": "astro check"`. Fix every
+      (`npm run cf-typegen`). `npm audit`: 0 vulnerabilities.
+- [x] Typecheck: add `@astrojs/check` + `typescript`; script `"check": "astro check"`. Fix every
       reported error. Known: `src/env.d.ts` uses `Runtime<Env>` but adapter 13's `Runtime` is not
       generic (it is `{ cfContext }`); `locals.runtime.env` no longer exists in Astro 6 - bindings
       come from `import { env } from 'cloudflare:workers'`.
-- [ ] Tests: add `vitest`; script `"test": "vitest run"`. Write tests for `coordinate-mapper`
+- [x] Tests: add `vitest`; script `"test": "vitest run"`. Write tests for `coordinate-mapper`
       **before** moving the code (pin cover-fit math: wider-than-container, taller-than-container,
       equal aspect; corners map to expected screen points).
-- [ ] MediaPipe WASM parity: JS is `0.10.34/35` but WASM is loaded from jsdelivr pinned at
+- [x] MediaPipe WASM parity: JS is `0.10.34/35` but WASM is loaded from jsdelivr pinned at
       `0.10.0`. Self-host: copy `node_modules/@mediapipe/tasks-vision/wasm/*` to
       `public/mediapipe/wasm/` (postinstall or prebuild script, directory gitignored) and point
       `FilesetResolver.forVisionTasks()` at it in both detectors. Model `.task` files stay remote
       for now (large); note as backlog.
-- [ ] Refactor `index.astro` into the layout in section 5. Extract in this order, running the
+- [x] Refactor `index.astro` into the layout in section 5. Extract in this order, running the
       camera checklist mentally between each: (a) `coordinate-mapper.ts`, (b) `state.ts`,
       (c) `sources/source.ts` + `camera-source.ts`, (d) `render-modes.ts`, (e) `main-loop.ts`,
       (f) `ControlPanel.astro`. Keep names of DOM ids stable.
-- [ ] Introduce the `VideoSource` interface now, with only `CameraSource` implementing it:
+- [x] Introduce the `VideoSource` interface now, with only `CameraSource` implementing it:
       `attach(video): Promise<void>`, `detach(): void`, `kind`, `mirrored: boolean`,
       `fit: 'cover' | 'contain'`, `isPlaying(): boolean`. The main loop asks the source whether
       to run inference this frame.
-- [ ] Replace the `hasActiveTrails` loop-start heuristic with an explicit `isLoopRunning` flag.
-- [ ] README: replace the Astro starter template with a real README (what it is, modes, how to
+- [x] Replace the `hasActiveTrails` loop-start heuristic with an explicit `isLoopRunning` flag.
+- [x] README: replace the Astro starter template with a real README (what it is, modes, how to
       run, how to deploy, link to this plan). Update `TIP_TRACK_RESUME.md` to point here.
 
 Out of scope: any new UI, any behavior change, Astro/MediaPipe majors.
@@ -431,40 +439,40 @@ Manual test checklist:
 
 ---
 
-### Step 6 - Rendering fidelity and labelling pass
+### Step 6 - Auto-seed editable track draft
 
-**Branch**: `video-mode/step-6-fidelity`
-**Goal**: Prove the end-to-end demo on real footage and fix whatever the first full labelling pass
-reveals. This is a hardening step; expect small changes across the recorded modules.
+**Branch**: `video-mode/step-6-auto-seed-editable-track`
+**Goal**: Generate a first-pass recorded track set from live hand/pose detections on video, then
+drop directly into recorded editing so the draft can be refined instead of labeled from scratch.
 
 Tasks:
 
-- [ ] Label a complete exchange (10-20 s) on the test footage, both tracks, at the chosen
-      auto-advance. Record how long it took and what was annoying in the status log.
-- [ ] Compare recorded-mode trails side by side with hand-mode trails on the same clip: width,
-      glow, fade, tip dot size should be indistinguishable. Tune the synthesized trail's sample
-      spacing / window if not.
-- [ ] Check spline behavior on fast lunges (overshoot between sparse keyframes). If overshoot is
-      visible, add a `tension` parameter (default 1.0 = Catmull-Rom) to the interpolator and
-      expose it in the panel.
-- [ ] Edge cases: seek during play; switching hand -> recorded -> hand mid-play; changing trail
-      length live; `maxGapSeconds` change re-renders immediately.
-- [ ] Performance: recorded mode holds 60 fps with two tracks and a 60-sample trail.
-- [ ] Export JSON reviewed as a plausible training-label format (includes `fps`, frame indices
-      derivable, normalized coords, video id/url).
-- [ ] Update `TIP_TRACK_RESUME.md` with a "how to demo" section.
+- [ ] Add a video-mode action to generate recorded draft tracks from current live detections
+      (hand or pose), with clear status text when insufficient samples exist.
+- [ ] Capture timed tip samples per track while video plays; store normalized coords and media
+      time so output aligns with current video and transport FPS.
+- [ ] Convert captured samples into frame-indexed keyframes suitable for `RecordedTrackSet`:
+      sorted, clamped 0-1, and at most one keyframe per frame.
+- [ ] Save the generated draft into the existing local recorded store for this `videoId` and
+      preserve import/export compatibility (schema stays version 1).
+- [ ] Switch to `trackingMode = recorded` after generation; keep editor toggle off by default so
+      playback can be verified before editing.
+- [ ] Surface a summary after generation (`A/B keyframe counts`, sampled duration, FPS basis).
+- [ ] Add focused unit tests for the conversion helper(s) (sample -> keyframe frame mapping,
+      dedupe per frame, bounds clamp, stable sort).
 
 Definition of done:
 
-- Willi can load the footage via `?video=`, switch to recorded mode, press play, and the demo
-  looks like the finished product. Anything short of that is a bug fixed in this step.
+- Starting from video + hand/pose mode, one action creates a usable recorded draft that can be
+  played immediately and then edited with the step 5 tools.
 
-Manual test checklist: the demo script itself, run in Chrome and Safari:
+Manual test checklist:
 
-- [ ] Open `?video=<url>`, select Recorded, play: two smooth neon trails follow the sword tips for
-      the whole labelled exchange; flash fires on the blade contact.
-- [ ] Pause anywhere, step back and forth: tip dot stays on the blade.
-- [ ] Switch to Hand mode on the same clip: live inference trails for comparison.
+- [ ] Load video, run in hand or pose for a short exchange, click generate draft.
+- [ ] App switches to recorded mode and renders generated trails without import/export steps.
+- [ ] Keyframe list is populated for both tracks and edits persist/reload normally.
+- [ ] Export JSON from generated draft re-imports identically.
+- [ ] Camera mode remains unaffected.
 
 ---
 
@@ -566,16 +574,35 @@ Storage keys:
 
 ## 9. Backlog (explicitly not scheduled)
 
+- Auto-seed follow-ups after step 6 baseline: confidence-aware thinning, "append vs replace"
+  generation modes, and one-click "generate only active track".
 - Compare mode: run live inference **and** recorded ground truth on the same clip, show per-frame
   error. The first real evaluation harness for a future model.
 - Training export: frames + labels (ffmpeg frame extraction at the stored `fps`), COCO-style JSON.
 - Cloudflare Access in front of the deployment (write protection).
 - hls.js fallback for Firefox/Edge, or Stream MP4 download URLs.
+- Normalize Stream playback URLs in step 2 (accept `watch.videodelivery.net/<uid>` and convert
+  to `https://videodelivery.net/<uid>/manifest/video.m3u8` automatically; iPhone/Safari proved
+  stricter about the direct media URL shape).
+- Transport stepping quality on sources with duplicate/near-duplicate frames or ambiguous CFR/VFR
+  metadata: consider optional "next distinct frame" stepping mode if this remains annoying.
+- Intermittent video playback freeze in video/recorded workflows: `NotSupportedError: The element has
+  no supported sources` can appear after extended editing/scrubbing; Play auto-reload and manual
+  "Load Video" recover, but root cause is unresolved.
+- Configurable left/right track mapping (e.g. red-left footage) plus improved identity stability in
+  live hand/pose tracking for two-fencer bouts.
 - "Not visible" keyframe type for explicit gaps.
 - More than two tracks / custom labels and colors.
 - Self-host MediaPipe `.task` model files.
-- Astro 7 / adapter 14 / MediaPipe 1.0 upgrade.
+- MediaPipe 1.0 upgrade (Astro 7 / adapter 14 done in step 1).
+- Verify `npm run deploy` against the adapter's emitted `dist/client/wrangler.json` (the build is
+  fully static today and deploy has likely never been run) - folded into step 7.
 - Undo/redo in the editor; zoom for precision placement.
+- Pre-existing quirks preserved by the step 1 refactor (fix deliberately, not by accident):
+  trails fade at 2x the nominal rate while the source is off (`fadeAllTrails` runs in both the
+  loop and render passes); the fps counter reports "1 fps" on the very first frame; the trail
+  renderer recomputes the video mapping per point instead of once per frame.
+- `imageService: 'passthrough'` for the Cloudflare adapter to drop the unused `/_image` endpoint.
 
 ## 10. Status log
 
@@ -583,6 +610,17 @@ Storage keys:
 |---|---|---|
 | 2026-09-24 | - | Plan agreed. Baseline `1842306`. HLS: native (Chrome 142+, Safari) confirmed via caniuse; Firefox/Edge unsupported. |
 | 2026-09-24 | - | Willi confirmed: step 2 MediaPipe-on-HLS decision gate is a genuine unknown (test first); seek/step clears trails while pause fades them; step 1 is strictly behavior-preserving. |
+| 2026-09-24 | 1 | Branch `video-mode/step-1-foundation`. Deps bumped, `astro check` + vitest added, MediaPipe WASM self-hosted (was 0.10.0 WASM under 0.10.34 JS). `npm audit fix --force` moved to Astro 7 / adapter 14; kept after verifying clean (decision 1 revised). Audit: 4 -> 0 vulnerabilities. Build output is fully static (page prerendered). |
+| 2026-09-24 | 1 | Checkpoint A (deps + WASM, pre-refactor) passed in Chrome: WASM served locally, hand + pose load, trails OK. Console shows only MediaPipe's own info/warn lines (GL context, NORM_RECT), unchanged from before. |
+| 2026-09-24 | 1 | Refactor done in 7 commits (a-g): coordinate-mapper, state store, VideoSource + CameraSource, render-modes, MainLoop (explicit running flag), ControlPanel.astro, overlay-sizing + detector-controller. 35 unit tests. `index.astro` 1055 -> 245 lines. Awaiting Checkpoint B (full camera regression). |
+| 2026-09-24 | 2 | New backlog item captured: after manual keyframe editing exists (step 5), add "auto-seed from pose" to generate an editable draft track. |
+| 2026-09-24 | 2 | iPhone/Safari check: direct Stream manifest URL (`https://videodelivery.net/<uid>/manifest/video.m3u8`) plays and tracks; non-manifest/player-style URL did not. Decision gate passes with canonical manifest URL. |
+| 2026-09-24 | 3 | Custom transport shipped (play/pause, ±1 frame, slider, readout, FPS detect/override, keyboard shortcuts). Back-step bug fixed (frame index floor + frame-center seek). Camera mode hides transport. Manual test acceptable: occasional jank likely source-frame duplication/CFR quirks; deferred to backlog. |
+| 2026-09-24 | 4 | Recorded mode shipped with JSON import/export, localStorage persistence, interpolation playback snapshots, and recorded-only panel visibility. Export filename now derives from the current video URL; schema no longer stores `videoName`. |
+| 2026-09-25 | 5 | Editor implementation landed on `video-mode/step-5-keyframe-editor`: edit toggle, active-track selection, auto-advance persistence, click/add-replace, drag markers, delete/clear, onion-skin markers + connector, keyframe list jump/delete, `[`/`]` nav, debounced autosave status. `npm run check`, `npm test`, and `npm run build` pass; manual checklist pending. |
+| 2026-09-26 | 5 | Editor/transport/render polish: live scrub preview, timeline-first editor (drag disabled), keyframe prev/next transport buttons + extra hotkeys, auto-advance frame-step consistency fix, interpolated current-frame marker, and trail rendering perf/fidelity tuning (no-blur default, optional stylized effects, longer recorded trail window). Intermittent `NotSupportedError` playback freeze still appears occasionally; mitigation auto-reloads source on Play failure, root cause deferred to backlog. |
+| 2026-09-26 | 6 | Step 6 scope updated to auto-seed editable recorded drafts (branch `video-mode/step-6-auto-seed-editable-track`) before broader fidelity hardening. |
+| 2026-09-26 | 6 | Implemented first auto-seed draft flow: capture live hand/pose tips while playing video, generate frame-deduped keyframes per track, save to recorded store, and switch directly to recorded mode for refinement. Added conversion helper tests (sort/clamp/dedupe). `npm run check`, `npm test`, and `npm run build` pass; manual browser checklist pending. |
 
 ## 11. Reference facts (verified during planning)
 
