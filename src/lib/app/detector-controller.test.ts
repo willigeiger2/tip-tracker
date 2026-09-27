@@ -18,8 +18,8 @@ function setup(options: { failInit?: boolean; attached?: boolean } = {}) {
 }
 
 describe('numTargetsFor', () => {
-  it('pose tracks one person, hand tracks two hands', () => {
-    expect(numTargetsFor('pose')).toBe(1);
+  it('pose and hand both track up to two targets', () => {
+    expect(numTargetsFor('pose')).toBe(2);
     expect(numTargetsFor('hand')).toBe(2);
   });
 });
@@ -75,7 +75,7 @@ describe('DetectorController.switchTo', () => {
 
     expect(reset).toHaveBeenCalledTimes(1);
     expect(onSwitchStart).toHaveBeenCalledTimes(1);
-    expect(init).toHaveBeenLastCalledWith('pose', expect.objectContaining({ numTargets: 1 }));
+    expect(init).toHaveBeenLastCalledWith('pose', expect.objectContaining({ numTargets: 2 }));
     expect(controller.isSwitching()).toBe(false);
     expect(controller.isReady()).toBe(true);
   });

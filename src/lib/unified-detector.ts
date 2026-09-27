@@ -10,19 +10,21 @@ import {
   LANDMARKS as POSE_LANDMARKS,
   POSE_CONNECTIONS 
 } from './detector';
-import { 
-  initHandDetector, 
+import {
+  initHandDetector,
   detectHands, 
   isHandDetectorReady, 
   resetHandDetector,
   HAND_LANDMARKS,
-  HAND_CONNECTIONS 
+  HAND_CONNECTIONS
 } from './hand-detector';
-import { estimateTipsForFencers } from './tip-estimator';
+import { estimateTip } from './tip-estimator';
+import { FencerTracker, type TipCandidate } from './app/fencer-tracker';
 
 // Current tracking mode
 export type InferenceTrackingMode = Exclude<TrackingMode, 'recorded'>;
 let currentMode: InferenceTrackingMode = 'pose';
+const fencerTracker = new FencerTracker();
 
 // Track initialization state
 let isInitializing = false;
@@ -107,30 +109,17 @@ async function detectPoseMode(
   timestamp: number
 ): Promise<DetectionResult[]> {
   const poses = await detectPose(video, timestamp);
-  const tips = estimateTipsForFencers(poses, timestamp);
-  
-  const results: DetectionResult[] = [];
-  
-  tips.forEach((tip, id) => {
-    const pose = poses.find((_, index) => {
-      // Match pose to tip based on side assignment logic
-      const noseX = poses[index]?.landmarks[POSE_LANDMARKS.NOSE]?.x ?? 0.5;
-      const expectedSide = id === 'A' ? 'left' : 'right';
-      const actualSide = noseX < 0.5 ? 'left' : 'right';
-      return actualSide === expectedSide;
-    });
-    
-    if (pose) {
-      results.push({
-        id,
-        side: tip.side,
-        tip,
-        landmarks: pose.landmarks,
-      });
-    }
-  });
-  
-  return results;
+
+  const candidates: TipCandidate[] = [];
+  for (const pose of poses.slice(0, 2)) {
+    const noseX = pose.landmarks[POSE_LANDMARKS.NOSE]?.x ?? 0.5;
+    const side = noseX < 0.5 ? 'left' : 'right';
+    const tip = estimateTip(pose, timestamp, side);
+    if (!tip) continue;
+    candidates.push({ tip, landmarks: pose.landmarks });
+  }
+
+  return fencerTracker.assign(candidates);
 }
 
 /**
@@ -178,6 +167,7 @@ export function isDetectorInitialized(): boolean {
 export async function resetCurrentDetector(): Promise<void> {
   resetDetector();
   resetHandDetector();
+  fencerTracker.reset();
   // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 }

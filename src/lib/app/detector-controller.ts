@@ -36,9 +36,9 @@ export interface DetectorControllerDeps {
 
 export const DETECTION_CONFIDENCE = 0.5;
 
-/** Pose tracks one person; hand mode tracks up to two hands. */
-export function numTargetsFor(mode: InferenceTrackingMode): number {
-  return mode === 'pose' ? 1 : 2;
+/** Pose and hand modes both track up to two targets. */
+export function numTargetsFor(_mode: InferenceTrackingMode): number {
+  return 2;
 }
 
 export class DetectorController {
