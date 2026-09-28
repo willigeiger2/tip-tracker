@@ -46,8 +46,14 @@ import Transport from '../components/Transport.astro';
     keyframeCount,
     loadTrackSet,
     saveTrackSet,
+    trackSetToSummary,
   } from '../lib/recorded/track-store';
-  import type { RecordedTrackSet } from '../lib/recorded/types';
+  import type { RecordedTrackSet, RecordedTrackSetSummary } from '../lib/recorded/types';
+  import {
+    fetchTrackSetFromKv,
+    fetchTrackSummariesFromKv,
+    saveTrackSetToKv,
+  } from '../lib/recorded/kv-client';
   import { keyframesFromLiveSamples, type LiveTipSample } from '../lib/recorded/auto-seed';
   import {
     deleteKeyframeAtFrame,
@@ -111,6 +117,10 @@ import Transport from '../components/Transport.astro';
   const recordedDeleteFrameBtn = byId<HTMLButtonElement>('recordedDeleteFrame');
   const recordedClearTrackBtn = byId<HTMLButtonElement>('recordedClearTrack');
   const recordedKeyframeList = byId<HTMLDivElement>('recordedKeyframeList');
+  const savedVideosPanel = byId<HTMLDivElement>('savedVideosPanel');
+  const savedVideosRefreshBtn = byId<HTMLButtonElement>('savedVideosRefresh');
+  const savedVideosList = byId<HTMLDivElement>('savedVideosList');
+  const savedVideosStatus = byId<HTMLSpanElement>('savedVideosStatus');
   const transportPlayPauseBtn = byId<HTMLButtonElement>('transportPlayPause');
   const transportStepBackBtn = byId<HTMLButtonElement>('transportStepBack');
   const transportStepForwardBtn = byId<HTMLButtonElement>('transportStepForward');
@@ -206,7 +216,11 @@ import Transport from '../components/Transport.astro';
   const AUTO_ADVANCE_FRAME_VALUES: Array<Exclude<RecordedAutoAdvanceMode, 'next'>> = [0, 1, 2, 5, 10];
   let recordedAutoAdvanceMode: RecordedAutoAdvanceMode = 2;
   let recordedSaveTimer: number | null = null;
+  let recordedSaveSequence = 0;
   let recordedStatusNote: string | null = null;
+  let savedVideoSummaries: RecordedTrackSetSummary[] = [];
+  let savedVideosLoading = false;
+  let savedVideosRefreshSequence = 0;
   let autoSeedSamples: Record<'A' | 'B', LiveTipSample[]> = { A: [], B: [] };
   let lastAutoSeedTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
   let showFencersDebugOverlay = false;
@@ -267,6 +281,14 @@ import Transport from '../components/Transport.astro';
     const inCameraMode = activeSource.kind === 'camera';
     for (const el of cameraOnlyElements) el.classList.toggle('hidden', !inCameraMode);
     for (const el of videoOnlyElements) el.classList.toggle('hidden', inCameraMode);
+
+    savedVideosPanel.classList.toggle('hidden', inCameraMode);
+    savedVideosRefreshBtn.disabled = inCameraMode || savedVideosLoading;
+    if (inCameraMode) {
+      savedVideosStatus.textContent = 'Switch to video source to browse saved library tracks.';
+    } else {
+      void refreshSavedVideosList({ silent: true });
+    }
 
     updateTrackingModeAvailability();
     updateRecordedPanelVisibility();
@@ -457,24 +479,157 @@ import Transport from '../components/Transport.astro';
     return recordedTrackSet?.fps || transportFps;
   }
 
-  function loadOrCreateRecordedTrackSet(url: string): void {
+  function formatSaveClock(timestamp = Date.now()): string {
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+
+  function savedVideoTitle(summary: RecordedTrackSetSummary): string {
+    try {
+      const parsed = new URL(summary.videoUrl);
+      const segments = parsed.pathname.split('/').filter(Boolean);
+      const tail = segments[segments.length - 1];
+      if (tail && tail !== 'video.m3u8') return tail;
+      return summary.videoId;
+    } catch {
+      return summary.videoId;
+    }
+  }
+
+  function upsertSavedVideoSummary(summary: RecordedTrackSetSummary): void {
+    savedVideoSummaries = [...savedVideoSummaries.filter((item) => item.videoId !== summary.videoId), summary].sort(
+      (a, b) => b.updatedAt - a.updatedAt
+    );
+    renderSavedVideosList();
+  }
+
+  function renderSavedVideosList(): void {
+    if (savedVideosLoading) {
+      savedVideosList.innerHTML = '<div class="hint">Loading library...</div>';
+      return;
+    }
+
+    if (savedVideoSummaries.length === 0) {
+      savedVideosList.innerHTML = '<div class="hint">No saved videos in library yet.</div>';
+      return;
+    }
+
+    savedVideosList.innerHTML = '';
+    for (const summary of savedVideoSummaries) {
+      const row = document.createElement('div');
+      row.className = 'saved-video-row';
+
+      const main = document.createElement('div');
+      main.className = 'saved-video-main';
+
+      const title = document.createElement('span');
+      title.className = 'saved-video-title';
+      title.textContent = savedVideoTitle(summary);
+
+      const meta = document.createElement('span');
+      meta.className = 'saved-video-meta';
+      const updated = formatSaveClock(summary.updatedAt);
+      const keyframes = `${summary.keyframeCount} keyframe${summary.keyframeCount === 1 ? '' : 's'}`;
+      meta.textContent = `${keyframes} · ${updated}`;
+
+      main.appendChild(title);
+      main.appendChild(meta);
+
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'saved-video-load';
+      loadBtn.textContent = 'Load';
+      loadBtn.dataset.videoId = summary.videoId;
+      loadBtn.dataset.videoUrl = summary.videoUrl;
+      if (currentVideoId === summary.videoId) {
+        loadBtn.classList.add('active');
+      }
+
+      row.appendChild(main);
+      row.appendChild(loadBtn);
+      savedVideosList.appendChild(row);
+    }
+  }
+
+  async function refreshSavedVideosList(options: { silent?: boolean } = {}): Promise<void> {
+    if (activeSource.kind !== 'video') return;
+
+    const sequence = ++savedVideosRefreshSequence;
+    savedVideosLoading = true;
+    savedVideosRefreshBtn.disabled = true;
+    if (!options.silent) {
+      savedVideosStatus.textContent = 'Loading saved video library...';
+    }
+    renderSavedVideosList();
+
+    try {
+      const summaries = await fetchTrackSummariesFromKv();
+      if (sequence !== savedVideosRefreshSequence) return;
+      savedVideoSummaries = summaries;
+      const count = summaries.length;
+      savedVideosStatus.textContent =
+        count === 0
+          ? 'No saved videos in library yet.'
+          : `${count} saved video${count === 1 ? '' : 's'} in library.`;
+    } catch (error) {
+      if (sequence !== savedVideosRefreshSequence) return;
+      console.warn('Failed to load saved videos list:', error);
+      savedVideosStatus.textContent = 'Library unavailable right now.';
+    } finally {
+      if (sequence !== savedVideosRefreshSequence) return;
+      savedVideosLoading = false;
+      savedVideosRefreshBtn.disabled = false;
+      renderSavedVideosList();
+    }
+  }
+
+  async function loadOrCreateRecordedTrackSet(url: string): Promise<void> {
     const videoId = deriveVideoId(url);
     currentVideoId = videoId;
     currentVideoUrl = url;
     resetAutoSeedCapture();
 
-    const loaded = loadTrackSet(videoId, url, transportFps);
-    if (loaded) {
-      loaded.videoId = videoId;
-      loaded.videoUrl = url;
-      recordedTrackSet = loaded;
-      saveTrackSet(recordedTrackSet);
-    } else {
-      recordedTrackSet = createEmptyTrackSet(videoId, url, transportFps, 1.0);
-      saveTrackSet(recordedTrackSet);
+    const local = loadTrackSet(videoId, url, transportFps);
+    let remote: RecordedTrackSet | null = null;
+    let remoteUnavailable = false;
+    try {
+      remote = await fetchTrackSetFromKv(videoId);
+    } catch (error) {
+      remoteUnavailable = true;
+      console.warn('Failed to load track set from KV, falling back to local store:', error);
     }
 
-    recordedStatusNote = null;
+    if (remote) {
+      upsertSavedVideoSummary(trackSetToSummary(remote));
+    }
+
+    const chosen =
+      remote && local
+        ? remote.updatedAt >= local.updatedAt
+          ? remote
+          : local
+        : remote ?? local ?? createEmptyTrackSet(videoId, url, transportFps, 1.0);
+
+    chosen.videoId = videoId;
+    chosen.videoUrl = url;
+    recordedTrackSet = chosen;
+    saveTrackSet(recordedTrackSet, { touchUpdatedAt: false });
+
+    if (remote && local) {
+      recordedStatusNote = remote.updatedAt >= local.updatedAt
+        ? 'Loaded from library.'
+        : 'Loaded local copy (newer than library).';
+    } else if (remote) {
+      recordedStatusNote = 'Loaded from library.';
+    } else if (local && remoteUnavailable) {
+      recordedStatusNote = 'Loaded local copy (library unavailable).';
+    } else {
+      recordedStatusNote = null;
+    }
+
     recordedActiveTrack = 'A';
     recordedActiveTrackSelect.value = 'A';
     renderRecordedKeyframeList();
@@ -483,32 +638,50 @@ import Transport from '../components/Transport.astro';
     updateRecordedStatus();
   }
 
-  function persistRecordedTrackSet(): void {
+  async function flushRecordedAutosave(sequence: number): Promise<void> {
     if (!recordedTrackSet) return;
-    saveTrackSet(recordedTrackSet);
+
+    const snapshot = JSON.parse(JSON.stringify(recordedTrackSet)) as RecordedTrackSet;
+    const snapshotVideoId = snapshot.videoId;
+    saveTrackSet(snapshot);
+
+    try {
+      const saved = await saveTrackSetToKv(snapshot);
+      if (sequence !== recordedSaveSequence) return;
+      if (!recordedTrackSet || saved.videoId !== recordedTrackSet.videoId) return;
+
+      recordedTrackSet = saved;
+      saveTrackSet(saved, { touchUpdatedAt: false });
+      upsertSavedVideoSummary(trackSetToSummary(saved));
+      recordedStatusNote = `Saved ${formatSaveClock(saved.updatedAt)}`;
+    } catch (error) {
+      if (sequence !== recordedSaveSequence) return;
+      if (!recordedTrackSet || recordedTrackSet.videoId !== snapshotVideoId) return;
+      console.warn('Failed to save track set to KV:', error);
+      recordedStatusNote = 'Saved locally (offline).';
+    }
+
+    if (sequence === recordedSaveSequence && recordedTrackSet && recordedTrackSet.videoId === snapshotVideoId) {
+      updateRecordedStatus();
+    }
   }
 
-  function scheduleRecordedAutosave(): void {
+  function scheduleRecordedAutosave(delayMs = RECORDED_AUTOSAVE_MS): void {
     if (!recordedTrackSet) return;
 
     recordedStatusNote = 'Unsaved changes...';
     updateRecordedStatus();
+
+    const sequence = ++recordedSaveSequence;
 
     if (recordedSaveTimer !== null) {
       window.clearTimeout(recordedSaveTimer);
     }
 
     recordedSaveTimer = window.setTimeout(() => {
-      persistRecordedTrackSet();
-      const stamp = new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
-      recordedStatusNote = `Saved ${stamp}`;
-      updateRecordedStatus();
       recordedSaveTimer = null;
-    }, RECORDED_AUTOSAVE_MS);
+      void flushRecordedAutosave(sequence);
+    }, delayMs);
   }
 
   function captureAutoSeedSamples(frame: FrameData): void {
@@ -613,7 +786,7 @@ import Transport from '../components/Transport.astro';
     recordedEditToggle.checked = false;
     updateRecordedEditorControlsVisibility();
     updateEditOverlayInteractivity();
-    persistRecordedTrackSet();
+    scheduleRecordedAutosave(0);
     renderRecordedKeyframeList();
     updateRecordedStatus();
     trailManager.clear();
@@ -1163,7 +1336,8 @@ import Transport from '../components/Transport.astro';
       await urlSource.attach(video);
       setVideoQueryParam(url);
       await detectTransportFps(url);
-      loadOrCreateRecordedTrackSet(url);
+      await loadOrCreateRecordedTrackSet(url);
+      void refreshSavedVideosList({ silent: true });
       updatePlaybackStatus();
       if (appState.get().trackingMode === 'recorded') {
         detectionStatus.textContent = video.paused ? 'Recorded mode - tap Play' : 'Recorded mode';
@@ -1178,6 +1352,18 @@ import Transport from '../components/Transport.astro';
       detectionStatus.textContent =
         err instanceof UnsupportedVideoSourceError ? err.message : 'Failed to load video URL';
       updatePlaybackStatus();
+    }
+  }
+
+  async function loadVideoFromLibrary(url: string): Promise<void> {
+    if (!url) return;
+    videoUrlInput.value = url;
+    savedVideosStatus.textContent = 'Loading selected library video...';
+    await loadVideoFromInput();
+
+    if (activeSource.kind === 'video' && currentVideoUrl === url) {
+      appState.update({ trackingMode: 'recorded' });
+      savedVideosStatus.textContent = 'Loaded from saved library entry.';
     }
   }
 
@@ -1266,6 +1452,20 @@ import Transport from '../components/Transport.astro';
     void loadVideoFromInput();
   });
 
+  savedVideosRefreshBtn.addEventListener('click', () => {
+    void refreshSavedVideosList();
+  });
+
+  savedVideosList.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement)) return;
+    if (!target.classList.contains('saved-video-load')) return;
+
+    const url = target.dataset.videoUrl?.trim() ?? '';
+    if (!url) return;
+    void loadVideoFromLibrary(url);
+  });
+
   recordedGenerateDraftBtn.addEventListener('click', () => {
     generateRecordedDraftFromLive();
   });
@@ -1300,7 +1500,7 @@ import Transport from '../components/Transport.astro';
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     recordedStatusNote = null;
-    persistRecordedTrackSet();
+    scheduleRecordedAutosave(0);
     renderRecordedKeyframeList();
     trailManager.clear();
     mainLoop.clearDetections();
@@ -1330,7 +1530,7 @@ import Transport from '../components/Transport.astro';
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     recordedStatusNote = null;
-    persistRecordedTrackSet();
+    scheduleRecordedAutosave(0);
     renderRecordedKeyframeList();
     trailManager.clear();
     mainLoop.clearDetections();
@@ -1537,7 +1737,7 @@ import Transport from '../components/Transport.astro';
     setTransportFps(parsed, false);
     if (recordedTrackSet) {
       recordedTrackSet.fps = parsed;
-      persistRecordedTrackSet();
+      scheduleRecordedAutosave(0);
     }
   });
 

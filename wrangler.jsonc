@@ -9,6 +9,12 @@
 		"directory": "./dist",
 		"binding": "ASSETS"
 	},
+	"kv_namespaces": [
+		{
+			"binding": "TRACKS",
+			"id": "00000000000000000000000000000000"
+		}
+	],
 	"observability": {
 		"enabled": true
 	}

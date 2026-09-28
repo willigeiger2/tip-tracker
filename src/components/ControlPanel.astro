@@ -117,6 +117,15 @@
     </div>
   </div>
 
+  <div id="savedVideosPanel" class="control-group video-only hidden">
+    <div class="recorded-list-header">
+      <span>Saved Videos</span>
+      <button id="savedVideosRefresh" type="button" class="saved-videos-refresh">Refresh</button>
+    </div>
+    <div id="savedVideosList" class="recorded-keyframe-list"></div>
+    <span id="savedVideosStatus" class="hint">Video library unavailable until a video source is active.</span>
+  </div>
+
   <div class="control-group">
     <label for="debugMode">Debug Mode</label>
     <select id="debugMode">
@@ -489,6 +498,69 @@
 
   .recorded-keyframe-delete {
     min-width: 46px;
+  }
+
+  .saved-videos-refresh {
+    width: auto;
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 0.72rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.92);
+  }
+
+  .saved-video-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 6px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .saved-video-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .saved-video-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .saved-video-title {
+    font-size: 0.79rem;
+    color: rgba(255, 255, 255, 0.95);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .saved-video-meta {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.62);
+  }
+
+  .saved-video-load {
+    width: auto;
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 0.74rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.95);
+    align-self: center;
+  }
+
+  .saved-video-load.active {
+    border-color: rgba(54, 214, 122, 0.8);
+    color: #36d67a;
   }
 
   .hidden {

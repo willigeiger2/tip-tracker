@@ -76,6 +76,12 @@ WASM files are copied from `node_modules` into `public/mediapipe/wasm/` (gitigno
 `scripts/copy-mediapipe-wasm.mjs` on `postinstall`, `predev` and `prebuild`, and loaded from
 `/mediapipe/wasm`. Model `.task` files are still fetched from Google's model storage.
 
+## Recorded track library (KV)
+
+- Recorded track sets sync to Cloudflare Workers KV through `/api/tracks` endpoints.
+- The app keeps a localStorage mirror so edits still persist offline and retry server sync later.
+- Current demo posture: writes are public (no auth). Cloudflare Access is the intended hardening step.
+
 ## Docs
 
 - `VIDEO_MODE_PLAN.md` - current step-by-step plan (video source, transport, recorded tracking,
