@@ -80,6 +80,10 @@ export interface TipRefinementDebug {
   refined: { x: number; y: number };
   searchStart: { x: number; y: number };
   searchEnd: { x: number; y: number };
+  arm?: 'left' | 'right';
+  rawExtensionLength?: number;
+  smoothedExtensionLength?: number;
+  lengthSmoothingAlpha?: number;
   confidence: number;
   edgeScore: number;
   usedRefined: boolean;
@@ -91,7 +95,11 @@ export interface DetectionResult {
   side: 'left' | 'right';
   tip: TipPosition;
   landmarks: Landmark[];  // All landmarks for this detection
+  arm?: 'left' | 'right'; // selected pose arm hypothesis (pose/fencers)
   handedness?: 'Left' | 'Right';  // actual hand side (hand mode only)
+  rawExtensionLength?: number; // fencers length before smoothing
+  smoothedExtensionLength?: number; // fencers length after smoothing
+  lengthSmoothingAlpha?: number; // internal EMA alpha (0-1)
   refinement?: TipRefinementDebug;
 }
 
@@ -99,5 +107,15 @@ export interface DetectionResult {
 export type TipEstimator = (
   wrist: Landmark,
   elbow: Landmark,
-  shoulder?: Landmark  // optional for more context
+  shoulder?: Landmark,  // optional for more context
+  options?: {
+    handHints?: {
+      index?: Landmark;
+      thumb?: Landmark;
+      pinky?: Landmark;
+    };
+    wristWeight?: number;
+    angleOffsetDeg?: number;
+    extensionMultiplier?: number;
+  }
 ) => { x: number; y: number; confidence: number };

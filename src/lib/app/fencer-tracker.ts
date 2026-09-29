@@ -7,6 +7,10 @@ export interface TipCandidate {
   tip: TipPosition;
   landmarks: Landmark[];
   bodyX?: number;
+  arm?: 'left' | 'right';
+  rawExtensionLength?: number;
+  smoothedExtensionLength?: number;
+  lengthSmoothingAlpha?: number;
   refinement?: TipRefinementDebug;
 }
 
@@ -85,6 +89,16 @@ export class FencerTracker {
         side,
       },
       landmarks: candidate.landmarks,
+      ...(candidate.arm ? { arm: candidate.arm } : {}),
+      ...(typeof candidate.rawExtensionLength === 'number'
+        ? { rawExtensionLength: candidate.rawExtensionLength }
+        : {}),
+      ...(typeof candidate.smoothedExtensionLength === 'number'
+        ? { smoothedExtensionLength: candidate.smoothedExtensionLength }
+        : {}),
+      ...(typeof candidate.lengthSmoothingAlpha === 'number'
+        ? { lengthSmoothingAlpha: candidate.lengthSmoothingAlpha }
+        : {}),
       ...(candidate.refinement ? { refinement: candidate.refinement } : {}),
     };
   }

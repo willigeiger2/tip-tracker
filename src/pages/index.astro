@@ -16,11 +16,17 @@ import Transport from '../components/Transport.astro';
 
 <script>
   // Page bootstrap: look up DOM elements, construct app modules, bind UI events.
-  import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
+  import {
+    initDetector,
+    detect,
+    resetCurrentDetector,
+    setFencerLengthSmoothingAlpha,
+    setFencerTipRefinementEnabled,
+  } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager } from '../lib/effects';
-  import { setPoseTipExtension } from '../lib/tip-estimator';
+  import { setFencerDirectionTuning, setPoseTipExtension } from '../lib/tip-estimator';
   import {
     DEFAULT_FRAME_RATE,
     detectVideoFrameRate,
@@ -110,6 +116,23 @@ import Transport from '../components/Transport.astro';
   const recordedGenerateHint = byId<HTMLSpanElement>('recordedGenerateHint');
   const fencersDebugGroup = byId<HTMLDivElement>('fencersDebugGroup');
   const fencersDebugOverlayInput = byId<HTMLInputElement>('fencersDebugOverlay');
+  const fencersTipRefinementEnabledInput = byId<HTMLInputElement>('fencersTipRefinementEnabled');
+  const fencerATipExtensionInput = byId<HTMLInputElement>('fencerATipExtension');
+  const fencerATipExtensionValue = byId<HTMLSpanElement>('fencerATipExtensionValue');
+  const fencerALengthSmoothingAlphaInput = byId<HTMLInputElement>('fencerALengthSmoothingAlpha');
+  const fencerALengthSmoothingAlphaValue = byId<HTMLSpanElement>('fencerALengthSmoothingAlphaValue');
+  const fencerAWristWeightInput = byId<HTMLInputElement>('fencerAWristWeight');
+  const fencerAWristWeightValue = byId<HTMLSpanElement>('fencerAWristWeightValue');
+  const fencerAAngleOffsetInput = byId<HTMLInputElement>('fencerAAngleOffset');
+  const fencerAAngleOffsetValue = byId<HTMLSpanElement>('fencerAAngleOffsetValue');
+  const fencerBTipExtensionInput = byId<HTMLInputElement>('fencerBTipExtension');
+  const fencerBTipExtensionValue = byId<HTMLSpanElement>('fencerBTipExtensionValue');
+  const fencerBLengthSmoothingAlphaInput = byId<HTMLInputElement>('fencerBLengthSmoothingAlpha');
+  const fencerBLengthSmoothingAlphaValue = byId<HTMLSpanElement>('fencerBLengthSmoothingAlphaValue');
+  const fencerBWristWeightInput = byId<HTMLInputElement>('fencerBWristWeight');
+  const fencerBWristWeightValue = byId<HTMLSpanElement>('fencerBWristWeightValue');
+  const fencerBAngleOffsetInput = byId<HTMLInputElement>('fencerBAngleOffset');
+  const fencerBAngleOffsetValue = byId<HTMLSpanElement>('fencerBAngleOffsetValue');
   const recordedEditToggle = byId<HTMLInputElement>('recordedEditToggle');
   const recordedEditorControls = byId<HTMLDivElement>('recordedEditorControls');
   const recordedActiveTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
@@ -223,6 +246,8 @@ import Transport from '../components/Transport.astro';
   let savedVideosRefreshSequence = 0;
   let autoSeedSamples: Record<'A' | 'B', LiveTipSample[]> = { A: [], B: [] };
   let lastAutoSeedTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
+  let autoSeedCaptureMode: Exclude<TrackingMode, 'recorded'> | null = null;
+  let lastAutoSeedMediaTime: number | null = null;
   let showFencersDebugOverlay = false;
   let transportFps = DEFAULT_FRAME_RATE;
   let transportFpsApproximate = true;
@@ -252,6 +277,25 @@ import Transport from '../components/Transport.astro';
   recordedAutoAdvanceSelect.value = String(recordedAutoAdvanceMode);
   recordedActiveTrackSelect.value = recordedActiveTrack;
 
+  const initialState = appState.get();
+  fencerATipExtensionInput.value = initialState.fencerATipExtension.toFixed(1);
+  fencerBTipExtensionInput.value = initialState.fencerBTipExtension.toFixed(1);
+  fencerALengthSmoothingAlphaInput.value = initialState.fencerALengthSmoothingAlpha.toFixed(2);
+  fencerBLengthSmoothingAlphaInput.value = initialState.fencerBLengthSmoothingAlpha.toFixed(2);
+  fencerAWristWeightInput.value = String(Math.round(initialState.fencerAWristWeight * 100));
+  fencerBWristWeightInput.value = String(Math.round(initialState.fencerBWristWeight * 100));
+  fencerAAngleOffsetInput.value = String(initialState.fencerAAngleOffsetDeg);
+  fencerBAngleOffsetInput.value = String(initialState.fencerBAngleOffsetDeg);
+  fencerATipExtensionValue.textContent = initialState.fencerATipExtension.toFixed(1);
+  fencerBTipExtensionValue.textContent = initialState.fencerBTipExtension.toFixed(1);
+  fencerALengthSmoothingAlphaValue.textContent = initialState.fencerALengthSmoothingAlpha.toFixed(2);
+  fencerBLengthSmoothingAlphaValue.textContent = initialState.fencerBLengthSmoothingAlpha.toFixed(2);
+  fencerAWristWeightValue.textContent = String(Math.round(initialState.fencerAWristWeight * 100));
+  fencerBWristWeightValue.textContent = String(Math.round(initialState.fencerBWristWeight * 100));
+  fencerAAngleOffsetValue.textContent = String(Math.round(initialState.fencerAAngleOffsetDeg));
+  fencerBAngleOffsetValue.textContent = String(Math.round(initialState.fencerBAngleOffsetDeg));
+  setFencerTipRefinementEnabled(fencersTipRefinementEnabledInput.checked);
+
   // ---- Configuration side effects ----
   appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
   appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
@@ -266,7 +310,27 @@ import Transport from '../components/Transport.astro';
     updateRecordedStatus();
   });
   appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
+  appState.on('fencerATipExtension', (value) => setFencerDirectionTuning('A', { extensionMultiplier: value }));
+  appState.on('fencerBTipExtension', (value) => setFencerDirectionTuning('B', { extensionMultiplier: value }));
+  appState.on('fencerALengthSmoothingAlpha', (value) => setFencerLengthSmoothingAlpha('A', 1 - value));
+  appState.on('fencerBLengthSmoothingAlpha', (value) => setFencerLengthSmoothingAlpha('B', 1 - value));
+  appState.on('fencerAWristWeight', (value) => setFencerDirectionTuning('A', { wristWeight: value }));
+  appState.on('fencerBWristWeight', (value) => setFencerDirectionTuning('B', { wristWeight: value }));
+  appState.on('fencerAAngleOffsetDeg', (value) => setFencerDirectionTuning('A', { angleOffsetDeg: value }));
+  appState.on('fencerBAngleOffsetDeg', (value) => setFencerDirectionTuning('B', { angleOffsetDeg: value }));
   setPoseTipExtension(appState.get().poseTipExtension);
+  setFencerDirectionTuning('A', {
+    extensionMultiplier: appState.get().fencerATipExtension,
+    wristWeight: appState.get().fencerAWristWeight,
+    angleOffsetDeg: appState.get().fencerAAngleOffsetDeg,
+  });
+  setFencerDirectionTuning('B', {
+    extensionMultiplier: appState.get().fencerBTipExtension,
+    wristWeight: appState.get().fencerBWristWeight,
+    angleOffsetDeg: appState.get().fencerBAngleOffsetDeg,
+  });
+  setFencerLengthSmoothingAlpha('A', 1 - appState.get().fencerALengthSmoothingAlpha);
+  setFencerLengthSmoothingAlpha('B', 1 - appState.get().fencerBLengthSmoothingAlpha);
 
   // ---- Helpers ----
   function applySourcePresentation(): void {
@@ -400,6 +464,8 @@ import Transport from '../components/Transport.astro';
   function resetAutoSeedCapture(): void {
     autoSeedSamples = { A: [], B: [] };
     lastAutoSeedTimestampByTrack = { A: null, B: null };
+    autoSeedCaptureMode = null;
+    lastAutoSeedMediaTime = null;
     updateAutoSeedUi();
   }
 
@@ -690,8 +756,19 @@ import Transport from '../components/Transport.astro';
     if (!activeSource.isPlaying()) return;
     if (frame.detections.length === 0) return;
 
+    const liveMode = frame.trackingMode;
+    if (autoSeedCaptureMode && autoSeedCaptureMode !== liveMode) {
+      resetAutoSeedCapture();
+    }
+    autoSeedCaptureMode = liveMode;
+
     const mediaTime = video.currentTime;
     if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
+
+    if (lastAutoSeedMediaTime !== null && mediaTime < lastAutoSeedMediaTime - 0.25) {
+      resetAutoSeedCapture();
+      autoSeedCaptureMode = liveMode;
+    }
 
     let capturedAny = false;
 
@@ -713,6 +790,7 @@ import Transport from '../components/Transport.astro';
     }
 
     if (capturedAny) {
+      lastAutoSeedMediaTime = mediaTime;
       updateAutoSeedUi();
     }
   }
@@ -807,6 +885,8 @@ import Transport from '../components/Transport.astro';
     detectionStatus.textContent =
       `Generated draft: A ${aKeyframes.length}, B ${bKeyframes.length} keyframes` +
       ` (${sampledDuration.toFixed(1)}s @ ${fps.toFixed(2)}fps)`;
+
+    resetAutoSeedCapture();
   }
 
   function formatClock(seconds: number): string {
@@ -1115,16 +1195,77 @@ import Transport from '../components/Transport.astro';
     const ctx = overlayCanvas.getContext('2d');
     if (!ctx) return;
 
+    const lengthDiagnostics = new Map<'A' | 'B', { raw: number; smooth: number; delta: number }>();
     for (const detection of frame.detections) {
-      if (!detection.refinement) continue;
+      const raw = detection.rawExtensionLength;
+      const smooth = detection.smoothedExtensionLength;
+      if (typeof raw !== 'number' || typeof smooth !== 'number') continue;
+      if (!Number.isFinite(raw) || !Number.isFinite(smooth)) continue;
+      const id: 'A' | 'B' = detection.id === 'B' ? 'B' : 'A';
+      lengthDiagnostics.set(id, { raw, smooth, delta: Math.abs(raw - smooth) });
+    }
 
+    if (frame.debugMode === 'skeleton' || frame.debugMode === 'all') {
+      const state = appState.get();
+      const aExt = state.fencerATipExtension.toFixed(1);
+      const bExt = state.fencerBTipExtension.toFixed(1);
+      const aSmooth = state.fencerALengthSmoothingAlpha.toFixed(2);
+      const bSmooth = state.fencerBLengthSmoothingAlpha.toFixed(2);
+      const aAlpha = (1 - state.fencerALengthSmoothingAlpha).toFixed(2);
+      const bAlpha = (1 - state.fencerBLengthSmoothingAlpha).toFixed(2);
+      const refinementMode = fencersTipRefinementEnabledInput.checked ? 'on' : 'off';
+      const aWrist = Math.round(state.fencerAWristWeight * 100);
+      const bWrist = Math.round(state.fencerBWristWeight * 100);
+      const aAngle = Math.round(state.fencerAAngleOffsetDeg);
+      const bAngle = Math.round(state.fencerBAngleOffsetDeg);
+      const aDiag = lengthDiagnostics.get('A');
+      const bDiag = lengthDiagnostics.get('B');
+      const aLen = aDiag
+        ? `L${aDiag.raw.toFixed(3)}->${aDiag.smooth.toFixed(3)} d${aDiag.delta.toFixed(3)}`
+        : 'L--';
+      const bLen = bDiag
+        ? `L${bDiag.raw.toFixed(3)}->${bDiag.smooth.toFixed(3)} d${bDiag.delta.toFixed(3)}`
+        : 'L--';
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(10, 10, 560, 54);
+      ctx.fillStyle = '#f4f4f4';
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Blade lines: F=Forearm W=Wrist B=Blend+Angle', 16, 21);
+      ctx.fillText(
+        `R:${refinementMode} | A E${aExt}x S${aSmooth}/a${aAlpha} W${aWrist}% A${aAngle}deg | B E${bExt}x S${bSmooth}/a${bAlpha} W${bWrist}% A${bAngle}deg`,
+        16,
+        36
+      );
+      ctx.fillText(`A ${aLen} | B ${bLen}`, 16, 50);
+      ctx.restore();
+    }
+
+    for (const detection of frame.detections) {
       const color = detection.id === 'B' ? '#ff4d5a' : '#36d67a';
-      const prior = mapToCanvas(detection.refinement.prior.x, detection.refinement.prior.y);
-      const refined = mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y);
-      const start = mapToCanvas(detection.refinement.searchStart.x, detection.refinement.searchStart.y);
-      const end = mapToCanvas(detection.refinement.searchEnd.x, detection.refinement.searchEnd.y);
-      const confidence = Math.round(detection.refinement.confidence * 100);
-      const label = `${detection.id} ${confidence}%`;
+      const hasRefinement = Boolean(detection.refinement);
+      const confidence = detection.refinement ? Math.round(detection.refinement.confidence * 100) : Math.round(detection.tip.confidence * 100);
+      const armSide = detection.arm ?? detection.refinement?.arm;
+      const arm = armSide ? armSide[0].toUpperCase() : '?';
+      const rawLen = detection.rawExtensionLength;
+      const smoothLen = detection.smoothedExtensionLength;
+      const delta =
+        typeof rawLen === 'number' &&
+        typeof smoothLen === 'number' &&
+        Number.isFinite(rawLen) &&
+        Number.isFinite(smoothLen)
+          ? Math.abs(rawLen - smoothLen)
+          : null;
+      const lenLabel =
+        delta !== null && typeof rawLen === 'number' && typeof smoothLen === 'number'
+          ? ` L${rawLen.toFixed(3)}->${smoothLen.toFixed(3)} d${delta.toFixed(3)}`
+          : '';
+      const label = `${detection.id} ${arm} ${confidence}%${lenLabel}`;
+      const labelAnchor = detection.refinement
+        ? mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y)
+        : mapToCanvas(detection.tip.x, detection.tip.y);
 
       ctx.save();
       ctx.strokeStyle = color;
@@ -1132,26 +1273,33 @@ import Transport from '../components/Transport.astro';
       ctx.lineWidth = 1.5;
       ctx.globalAlpha = 0.95;
 
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(end.x, end.y);
-      ctx.stroke();
+      if (hasRefinement && detection.refinement) {
+        const prior = mapToCanvas(detection.refinement.prior.x, detection.refinement.prior.y);
+        const refined = mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y);
+        const start = mapToCanvas(detection.refinement.searchStart.x, detection.refinement.searchStart.y);
+        const end = mapToCanvas(detection.refinement.searchEnd.x, detection.refinement.searchEnd.y);
 
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.arc(prior.x, prior.y, 4, 0, Math.PI * 2);
-      ctx.stroke();
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
 
-      ctx.beginPath();
-      ctx.arc(refined.x, refined.y, 3, 0, Math.PI * 2);
-      ctx.fill();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(prior.x, prior.y, 4, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(refined.x, refined.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(label, refined.x + 7, refined.y - 8);
+      ctx.fillText(label, labelAnchor.x + 7, labelAnchor.y - 8);
       ctx.restore();
     }
   }
@@ -1630,6 +1778,10 @@ import Transport from '../components/Transport.astro';
     showFencersDebugOverlay = fencersDebugOverlayInput.checked;
   });
 
+  fencersTipRefinementEnabledInput.addEventListener('change', () => {
+    setFencerTipRefinementEnabled(fencersTipRefinementEnabledInput.checked);
+  });
+
   debugModeSelect.addEventListener('change', (e) => {
     appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
   });
@@ -1656,6 +1808,54 @@ import Transport from '../components/Transport.astro';
     const value = parseFloat((e.target as HTMLInputElement).value);
     poseTipExtensionValue.textContent = value.toFixed(1);
     appState.update({ poseTipExtension: value });
+  });
+
+  fencerATipExtensionInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerATipExtensionValue.textContent = value.toFixed(1);
+    appState.update({ fencerATipExtension: value });
+  });
+
+  fencerBTipExtensionInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerBTipExtensionValue.textContent = value.toFixed(1);
+    appState.update({ fencerBTipExtension: value });
+  });
+
+  fencerALengthSmoothingAlphaInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerALengthSmoothingAlphaValue.textContent = value.toFixed(2);
+    appState.update({ fencerALengthSmoothingAlpha: value });
+  });
+
+  fencerBLengthSmoothingAlphaInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerBLengthSmoothingAlphaValue.textContent = value.toFixed(2);
+    appState.update({ fencerBLengthSmoothingAlpha: value });
+  });
+
+  fencerAWristWeightInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerAWristWeightValue.textContent = String(value);
+    appState.update({ fencerAWristWeight: value / 100 });
+  });
+
+  fencerBWristWeightInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerBWristWeightValue.textContent = String(value);
+    appState.update({ fencerBWristWeight: value / 100 });
+  });
+
+  fencerAAngleOffsetInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerAAngleOffsetValue.textContent = String(value);
+    appState.update({ fencerAAngleOffsetDeg: value });
+  });
+
+  fencerBAngleOffsetInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerBAngleOffsetValue.textContent = String(value);
+    appState.update({ fencerBAngleOffsetDeg: value });
   });
 
   effectModeSelect.addEventListener('change', (e) => {

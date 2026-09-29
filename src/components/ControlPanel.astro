@@ -56,7 +56,38 @@
         <input id="fencersDebugOverlay" type="checkbox" />
         <span>Fencers debug overlay</span>
       </label>
-      <small class="hint">Shows prior/refined tip points and confidence in fencers mode.</small>
+      <label class="inline-toggle">
+        <input id="fencersTipRefinementEnabled" type="checkbox" checked />
+        <span>Tip refinement enabled</span>
+      </label>
+
+      <div class="fencer-tuning-grid">
+        <div class="fencer-tuning-card">
+          <h3>Fencer A (Green)</h3>
+          <label for="fencerATipExtension">Tip Extension: <span id="fencerATipExtensionValue">3.6</span>x</label>
+          <input id="fencerATipExtension" type="range" min="1" max="8" value="3.6" step="0.1" />
+          <label for="fencerALengthSmoothingAlpha">Length Smoothing: <span id="fencerALengthSmoothingAlphaValue">0.68</span></label>
+          <input id="fencerALengthSmoothingAlpha" type="range" min="0" max="1" value="0.68" step="0.01" />
+          <label for="fencerAWristWeight">Wrist Blend: <span id="fencerAWristWeightValue">35</span>%</label>
+          <input id="fencerAWristWeight" type="range" min="0" max="100" value="35" step="1" />
+          <label for="fencerAAngleOffset">Angle Adjust: <span id="fencerAAngleOffsetValue">0</span>&deg;</label>
+          <input id="fencerAAngleOffset" type="range" min="-30" max="30" value="0" step="1" />
+        </div>
+
+        <div class="fencer-tuning-card">
+          <h3>Fencer B (Red)</h3>
+          <label for="fencerBTipExtension">Tip Extension: <span id="fencerBTipExtensionValue">3.6</span>x</label>
+          <input id="fencerBTipExtension" type="range" min="1" max="8" value="3.6" step="0.1" />
+          <label for="fencerBLengthSmoothingAlpha">Length Smoothing: <span id="fencerBLengthSmoothingAlphaValue">0.68</span></label>
+          <input id="fencerBLengthSmoothingAlpha" type="range" min="0" max="1" value="0.68" step="0.01" />
+          <label for="fencerBWristWeight">Wrist Blend: <span id="fencerBWristWeightValue">35</span>%</label>
+          <input id="fencerBWristWeight" type="range" min="0" max="100" value="35" step="1" />
+          <label for="fencerBAngleOffset">Angle Adjust: <span id="fencerBAngleOffsetValue">0</span>&deg;</label>
+          <input id="fencerBAngleOffset" type="range" min="-30" max="30" value="0" step="1" />
+        </div>
+      </div>
+
+      <small class="hint">0.00 = no smoothing, 1.00 = strongest smoothing. Skeleton/all shows F, W, and B direction lines.</small>
     </div>
   </div>
 
@@ -195,14 +226,14 @@
     </div>
     <div class="control-group">
       <label for="poseTipExtension">
-        Pose Tip Extension: <span id="poseTipExtensionValue">4.2</span>x
+        Pose Mode Tip Extension: <span id="poseTipExtensionValue">3.6</span>x
       </label>
       <input
         type="range"
         id="poseTipExtension"
         min="1"
         max="8"
-        value="4.2"
+        value="3.6"
         step="0.1"
       />
       <small class="hint">Pose mode only. Higher values push the tip farther past the wrist.</small>
@@ -447,6 +478,39 @@
   .inline-toggle input[type="checkbox"] {
     width: auto;
     margin: 0;
+  }
+
+  .fencer-tuning-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin: 10px 0 6px;
+  }
+
+  .fencer-tuning-card {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .fencer-tuning-card h3 {
+    margin: 0 0 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .fencer-tuning-card label {
+    margin-bottom: 4px;
+  }
+
+  .fencer-tuning-card input[type='range'] {
+    margin-bottom: 8px;
+  }
+
+  .fencer-tuning-card input[type='range']:last-child {
+    margin-bottom: 0;
   }
 
   .recorded-editor-grid {

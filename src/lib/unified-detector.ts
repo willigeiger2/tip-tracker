@@ -18,7 +18,7 @@ import {
   HAND_LANDMARKS,
   HAND_CONNECTIONS
 } from './hand-detector';
-import { estimateTip } from './tip-estimator';
+import { estimateTip, estimateTipForArm, getFencerDirectionTuning, type TrackId } from './tip-estimator';
 import { FencerTracker, type TipCandidate } from './app/fencer-tracker';
 import { captureVideoFramePixels, refineTipFromFrame } from './fencers/tip-refiner';
 
@@ -26,6 +26,51 @@ import { captureVideoFramePixels, refineTipFromFrame } from './fencers/tip-refin
 export type InferenceTrackingMode = Exclude<TrackingMode, 'recorded'>;
 let currentMode: InferenceTrackingMode = 'pose';
 const fencerTracker = new FencerTracker();
+let fencerTipRefinementEnabled = true;
+const DEFAULT_EXTENSION_SMOOTHING_ALPHA = 0.32;
+const smoothedExtensionByTrack: Record<TrackId, number | null> = { A: null, B: null };
+const extensionSmoothingAlphaByTrack: Record<TrackId, number> = {
+  A: DEFAULT_EXTENSION_SMOOTHING_ALPHA,
+  B: DEFAULT_EXTENSION_SMOOTHING_ALPHA,
+};
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function clampSmoothingAlpha(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_EXTENSION_SMOOTHING_ALPHA;
+  return Math.max(0, Math.min(1, value));
+}
+
+export function setFencerLengthSmoothingAlpha(track: TrackId, alpha: number): void {
+  extensionSmoothingAlphaByTrack[track] = clampSmoothingAlpha(alpha);
+}
+
+export function getFencerLengthSmoothingAlpha(track: TrackId): number {
+  return extensionSmoothingAlphaByTrack[track];
+}
+
+export function setFencerTipRefinementEnabled(enabled: boolean): void {
+  fencerTipRefinementEnabled = enabled;
+}
+
+function smoothExtensionLength(track: TrackId, next: number): number {
+  const prev = smoothedExtensionByTrack[track];
+  const alpha = extensionSmoothingAlphaByTrack[track];
+  const smoothed = prev === null ? next : prev + (next - prev) * alpha;
+  smoothedExtensionByTrack[track] = smoothed;
+  return smoothed;
+}
+
+function resetExtensionSmoothing(): void {
+  smoothedExtensionByTrack.A = null;
+  smoothedExtensionByTrack.B = null;
+}
+
+function trackForBodyX(bodyX: number): TrackId {
+  return bodyX < 0.5 ? 'B' : 'A';
+}
 
 function poseBodyAnchorX(landmarks: { x: number }[]): number {
   const xs: number[] = [];
@@ -128,40 +173,97 @@ async function detectPoseMode(
   timestamp: number
 ): Promise<DetectionResult[]> {
   const poses = await detectPose(video, timestamp);
-  const refinementFrame = currentMode === 'fencers' ? captureVideoFramePixels(video) : null;
+  const inFencersMode = currentMode === 'fencers';
+  const refinementFrame =
+    inFencersMode && fencerTipRefinementEnabled ? captureVideoFramePixels(video) : null;
 
   const candidates: TipCandidate[] = [];
   for (const pose of poses.slice(0, 2)) {
-    const noseX = pose.landmarks[POSE_LANDMARKS.NOSE]?.x ?? 0.5;
-    const side = noseX < 0.5 ? 'left' : 'right';
-    const baseTip = estimateTip(pose, timestamp, side);
-    if (!baseTip) continue;
+    const bodyX = poseBodyAnchorX(pose.landmarks);
+    const side = bodyX < 0.5 ? 'left' : 'right';
+
+    if (!inFencersMode) {
+      const tip = estimateTip(pose, timestamp, side);
+      if (!tip) continue;
+
+      candidates.push({
+        tip,
+        landmarks: pose.landmarks,
+        bodyX,
+      });
+      continue;
+    }
+
+    const forcedArm = 'right' as const;
+    const tuningTrack = trackForBodyX(bodyX);
+    const rawTip = estimateTipForArm(pose, timestamp, side, forcedArm, tuningTrack);
+    if (!rawTip) continue;
+
+    const wrist = pose.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
+    const elbow = pose.landmarks[POSE_LANDMARKS.RIGHT_ELBOW];
+    if (!wrist || !elbow) continue;
+
+    const rawDirDx = rawTip.x - wrist.x;
+    const rawDirDy = rawTip.y - wrist.y;
+    const rawDirLen = Math.sqrt(rawDirDx * rawDirDx + rawDirDy * rawDirDy);
+    if (!Number.isFinite(rawDirLen) || rawDirLen < 1e-4) continue;
+
+    const forearmDx = wrist.x - elbow.x;
+    const forearmDy = wrist.y - elbow.y;
+    const forearmLength = Math.sqrt(forearmDx * forearmDx + forearmDy * forearmDy);
+    if (!Number.isFinite(forearmLength) || forearmLength < 1e-4) continue;
+
+    const tuning = getFencerDirectionTuning(tuningTrack);
+    const rawExtensionLength = forearmLength * tuning.extensionMultiplier;
+    const smoothedExtensionLength = smoothExtensionLength(tuningTrack, rawExtensionLength);
+
+    const baseTip = {
+      ...rawTip,
+      x: clamp01(wrist.x + (rawDirDx / rawDirLen) * smoothedExtensionLength),
+      y: clamp01(wrist.y + (rawDirDy / rawDirLen) * smoothedExtensionLength),
+    };
 
     let tip = baseTip;
     let refinement: TipCandidate['refinement'] | undefined;
-    if (currentMode === 'fencers') {
-      const wrist = pose.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
-      const elbow = pose.landmarks[POSE_LANDMARKS.RIGHT_ELBOW];
-      if (wrist && elbow && refinementFrame) {
-        refinement = refineTipFromFrame(
-          refinementFrame,
-          { x: baseTip.x, y: baseTip.y },
-          wrist,
-          elbow
-        );
-        tip = {
-          ...baseTip,
-          x: refinement.refined.x,
-          y: refinement.refined.y,
-          confidence: Math.max(0.05, Math.min(baseTip.confidence, 0.35 + refinement.confidence * 0.65)),
-        };
-      }
+    if (refinementFrame) {
+      const seedDx = baseTip.x - wrist.x;
+      const seedDy = baseTip.y - wrist.y;
+      const seedLength = Math.sqrt(seedDx * seedDx + seedDy * seedDy);
+      const seedDirection =
+        Number.isFinite(seedLength) && seedLength > 1e-4
+          ? {
+              x: seedDx / seedLength,
+              y: seedDy / seedLength,
+            }
+          : undefined;
+
+      refinement = refineTipFromFrame(
+        refinementFrame,
+        { x: baseTip.x, y: baseTip.y },
+        wrist,
+        elbow,
+        seedDirection
+      );
+      refinement.arm = forcedArm;
+      refinement.rawExtensionLength = rawExtensionLength;
+      refinement.smoothedExtensionLength = smoothedExtensionLength;
+      refinement.lengthSmoothingAlpha = extensionSmoothingAlphaByTrack[tuningTrack];
+      tip = {
+        ...baseTip,
+        x: refinement.refined.x,
+        y: refinement.refined.y,
+        confidence: Math.max(0.05, Math.min(baseTip.confidence, 0.35 + refinement.confidence * 0.65)),
+      };
     }
 
     candidates.push({
       tip,
       landmarks: pose.landmarks,
-      bodyX: poseBodyAnchorX(pose.landmarks),
+      bodyX,
+      arm: forcedArm,
+      rawExtensionLength,
+      smoothedExtensionLength,
+      lengthSmoothingAlpha: extensionSmoothingAlphaByTrack[tuningTrack],
       refinement,
     });
   }
@@ -215,6 +317,7 @@ export async function resetCurrentDetector(): Promise<void> {
   resetDetector();
   resetHandDetector();
   fencerTracker.reset();
+  resetExtensionSmoothing();
   // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 }

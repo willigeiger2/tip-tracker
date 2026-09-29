@@ -64,4 +64,18 @@ describe('refineTipFromFrame', () => {
     expect(result.refined.x).toBeCloseTo(0.35, 5);
     expect(result.refined.y).toBeCloseTo(0.44, 5);
   });
+
+  it('uses provided seed direction when available', () => {
+    const frame = createFrame(120, 80, () => 128);
+    const result = refineTipFromFrame(
+      frame,
+      { x: 0.4, y: 0.5 },
+      { x: 0.3, y: 0.5, z: 0, visibility: 1 },
+      { x: 0.2, y: 0.5, z: 0, visibility: 1 },
+      { x: 0.6, y: -0.8 }
+    );
+
+    expect(result.searchStart.x).toBeGreaterThan(0.3);
+    expect(result.searchStart.y).toBeLessThan(0.5);
+  });
 });

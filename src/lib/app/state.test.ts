@@ -71,7 +71,15 @@ describe('createAppState', () => {
     expect(state.debugMode).toBe('none');
     expect(state.inferenceFps).toBe(15);
     expect(state.trailLength).toBe(30);
-    expect(state.poseTipExtension).toBe(4.2);
+    expect(state.poseTipExtension).toBe(3.6);
+    expect(state.fencerAWristWeight).toBe(0.35);
+    expect(state.fencerBWristWeight).toBe(0.35);
+    expect(state.fencerAAngleOffsetDeg).toBe(0);
+    expect(state.fencerBAngleOffsetDeg).toBe(0);
+    expect(state.fencerATipExtension).toBe(3.6);
+    expect(state.fencerBTipExtension).toBe(3.6);
+    expect(state.fencerALengthSmoothingAlpha).toBe(0.68);
+    expect(state.fencerBLengthSmoothingAlpha).toBe(0.68);
   });
 
   it('accepts overrides', () => {

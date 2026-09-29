@@ -90,7 +90,8 @@ export function refineTipFromFrame(
   frame: VideoFramePixels,
   prior: { x: number; y: number },
   wrist: Landmark,
-  elbow: Landmark
+  elbow: Landmark,
+  seedDirection?: { x: number; y: number }
 ): TipRefinementDebug {
   const base: TipRefinementDebug = {
     prior: { x: clamp01(prior.x), y: clamp01(prior.y) },
@@ -107,8 +108,15 @@ export function refineTipFromFrame(
   const forearm = Math.sqrt(dx * dx + dy * dy);
   if (!Number.isFinite(forearm) || forearm < 1e-4) return base;
 
-  const dirX = dx / forearm;
-  const dirY = dy / forearm;
+  let dirX = dx / forearm;
+  let dirY = dy / forearm;
+  if (seedDirection && Number.isFinite(seedDirection.x) && Number.isFinite(seedDirection.y)) {
+    const seedLen = Math.sqrt(seedDirection.x * seedDirection.x + seedDirection.y * seedDirection.y);
+    if (seedLen > 1e-4) {
+      dirX = seedDirection.x / seedLen;
+      dirY = seedDirection.y / seedLen;
+    }
+  }
   const normalX = -dirY;
   const normalY = dirX;
 

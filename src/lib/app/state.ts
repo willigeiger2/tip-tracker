@@ -16,6 +16,18 @@ export interface AppState {
   glowIntensity: number;
   /** Pose mode only: sword-tip extension as a forearm-length multiplier. */
   poseTipExtension: number;
+  /** Fencers mode: per-fencer blend weight for wrist orientation (0-1). */
+  fencerAWristWeight: number;
+  fencerBWristWeight: number;
+  /** Fencers mode: per-fencer directional angle offset in degrees. */
+  fencerAAngleOffsetDeg: number;
+  fencerBAngleOffsetDeg: number;
+  /** Fencers mode: per-fencer blade extension multiplier. */
+  fencerATipExtension: number;
+  fencerBTipExtension: number;
+  /** Fencers mode: per-fencer length smoothing amount (0 = no smoothing, 1 = max smoothing). */
+  fencerALengthSmoothingAlpha: number;
+  fencerBLengthSmoothingAlpha: number;
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -25,7 +37,15 @@ export const DEFAULT_APP_STATE: AppState = {
   inferenceFps: 15,
   trailLength: 30,
   glowIntensity: 1.0,
-  poseTipExtension: 4.2,
+  poseTipExtension: 3.6,
+  fencerAWristWeight: 0.35,
+  fencerBWristWeight: 0.35,
+  fencerAAngleOffsetDeg: 0,
+  fencerBAngleOffsetDeg: 0,
+  fencerATipExtension: 3.6,
+  fencerBTipExtension: 3.6,
+  fencerALengthSmoothingAlpha: 0.68,
+  fencerBLengthSmoothingAlpha: 0.68,
 };
 
 export type StateListener<T> = (state: Readonly<T>, changed: ReadonlySet<keyof T>) => void;
