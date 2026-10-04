@@ -30,10 +30,11 @@ describe('refineTipFromFrame', () => {
       { x: 0.2, y: 0.5, z: 0, visibility: 1 }
     );
 
-    expect(result.confidence).toBe(0);
+    expect(result.confidence).toBeLessThan(0.12);
     expect(result.usedRefined).toBe(false);
     expect(result.refined.x).toBeCloseTo(0.4, 5);
     expect(result.refined.y).toBeCloseTo(0.5, 5);
+    expect(result.fan && result.fan.length).toBeGreaterThan(5);
   });
 
   it('pulls toward refined endpoint when strong edge signal exists', () => {
@@ -45,10 +46,12 @@ describe('refineTipFromFrame', () => {
       { x: 0.2, y: 0.5, z: 0, visibility: 1 }
     );
 
-    expect(result.confidence).toBeGreaterThan(0.2);
+    expect(result.confidence).toBeGreaterThan(0.12);
     expect(result.usedRefined).toBe(true);
     expect(result.refined.x).toBeGreaterThan(0.4);
-    expect(result.refined.x).toBeLessThanOrEqual(0.48);
+    expect(result.refined.x).toBeLessThanOrEqual(0.52);
+    expect(result.endpoint).toBeDefined();
+    expect(result.bestLinePoint).toBeDefined();
   });
 
   it('falls back safely when forearm direction is invalid', () => {
@@ -77,5 +80,25 @@ describe('refineTipFromFrame', () => {
 
     expect(result.searchStart.x).toBeGreaterThan(0.3);
     expect(result.searchStart.y).toBeLessThan(0.5);
+  });
+
+  it('records best/second fan angle diagnostics', () => {
+    const frame = createFrame(140, 90, (x, y) => {
+      const cx = 25 + y * 0.9;
+      const dist = Math.abs(x - cx);
+      if (dist < 2) return 245;
+      return 20;
+    });
+
+    const result = refineTipFromFrame(
+      frame,
+      { x: 0.42, y: 0.5 },
+      { x: 0.3, y: 0.5, z: 0, visibility: 1 },
+      { x: 0.2, y: 0.5, z: 0, visibility: 1 }
+    );
+
+    expect(result.fan && result.fan.length).toBeGreaterThan(5);
+    expect(typeof result.bestFanAngleDeg).toBe('number');
+    expect(typeof result.secondFanAngleDeg).toBe('number');
   });
 });

@@ -76,6 +76,7 @@ export type EffectMode =
 export type TrackingMode = 'pose' | 'fencers' | 'hand' | 'recorded';
 
 export interface TipRefinementDebug {
+  wrist?: { x: number; y: number };
   prior: { x: number; y: number };
   refined: { x: number; y: number };
   searchStart: { x: number; y: number };
@@ -86,6 +87,31 @@ export interface TipRefinementDebug {
   lengthSmoothingAlpha?: number;
   confidence: number;
   edgeScore: number;
+  fan?: Array<{
+    angleDeg: number;
+    score: number;
+    end: { x: number; y: number };
+  }>;
+  bestFanAngleDeg?: number;
+  secondFanAngleDeg?: number;
+  bestRayScore?: number;
+  secondRayScore?: number;
+  fanMargin?: number;
+  bestDirection?: { x: number; y: number };
+  angleConfidence?: number;
+  endpointConfidence?: number;
+  bestLinePoint?: { x: number; y: number };
+  endpoint?: { x: number; y: number };
+  endpointScore?: number;
+  directionDeltaDeg?: number;
+  endpointLengthRatio?: number;
+  refinedShiftFromPrior?: number;
+  trustedDirection?: boolean;
+  trustedLength?: boolean;
+  refinementAccepted?: boolean;
+  reusedPrevious?: boolean;
+  reusedDirection?: boolean;
+  reusedLength?: boolean;
   usedRefined: boolean;
 }
 

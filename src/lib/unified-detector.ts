@@ -28,14 +28,92 @@ let currentMode: InferenceTrackingMode = 'pose';
 const fencerTracker = new FencerTracker();
 let fencerTipRefinementEnabled = true;
 const DEFAULT_EXTENSION_SMOOTHING_ALPHA = 0.32;
+
+interface RefinementTrustProfile {
+  minDirectionConfidence: number;
+  minLengthConfidence: number;
+  minFanMargin: number;
+  maxDirectionDeltaDeg: number;
+  maxBestFanAngleDeg: number;
+  maxLengthRatioDelta: number;
+  maxRefinedShift: number;
+  maxRefinedShiftLowMargin: number;
+  lowMarginThreshold: number;
+  directionMemoryBlend: number;
+  lengthMemoryBlend: number;
+  useMemoryOnRejectedDirection: boolean;
+  useMemoryOnRejectedLength: boolean;
+  requireDirectionAndLengthTrust: boolean;
+  refinedTipBlend: number;
+}
+
+const REFINEMENT_TRUST_PROFILE: Record<TrackId, RefinementTrustProfile> = {
+  A: {
+    minDirectionConfidence: 0.78,
+    minLengthConfidence: 0.86,
+    minFanMargin: 0.08,
+    maxDirectionDeltaDeg: 21,
+    maxBestFanAngleDeg: 24,
+    maxLengthRatioDelta: 0.24,
+    maxRefinedShift: 0.055,
+    maxRefinedShiftLowMargin: 0.04,
+    lowMarginThreshold: 0.16,
+    directionMemoryBlend: 0.58,
+    lengthMemoryBlend: 0.62,
+    useMemoryOnRejectedDirection: false,
+    useMemoryOnRejectedLength: false,
+    requireDirectionAndLengthTrust: true,
+    refinedTipBlend: 0.2,
+  },
+  B: {
+    minDirectionConfidence: 0.3,
+    minLengthConfidence: 0.45,
+    minFanMargin: 0.02,
+    maxDirectionDeltaDeg: 45,
+    maxBestFanAngleDeg: 36,
+    maxLengthRatioDelta: 0.85,
+    maxRefinedShift: 0.14,
+    maxRefinedShiftLowMargin: 0.1,
+    lowMarginThreshold: 0.07,
+    directionMemoryBlend: 0.45,
+    lengthMemoryBlend: 0.5,
+    useMemoryOnRejectedDirection: true,
+    useMemoryOnRejectedLength: true,
+    requireDirectionAndLengthTrust: false,
+    refinedTipBlend: 0.8,
+  },
+};
 const smoothedExtensionByTrack: Record<TrackId, number | null> = { A: null, B: null };
 const extensionSmoothingAlphaByTrack: Record<TrackId, number> = {
   A: DEFAULT_EXTENSION_SMOOTHING_ALPHA,
   B: DEFAULT_EXTENSION_SMOOTHING_ALPHA,
 };
+const refinementMemoryByTrack: Record<TrackId, { dir: { x: number; y: number } | null; length: number | null }> = {
+  A: { dir: null, length: null },
+  B: { dir: null, length: null },
+};
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function normalizeDirection(dx: number, dy: number): { x: number; y: number } | null {
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (!Number.isFinite(len) || len < 1e-6) return null;
+  return { x: dx / len, y: dy / len };
+}
+
+function directionDeltaDegrees(
+  a: { x: number; y: number } | null,
+  b: { x: number; y: number } | null
+): number | null {
+  if (!a || !b) return null;
+  const dot = clampRange(a.x * b.x + a.y * b.y, -1, 1);
+  return (Math.acos(dot) * 180) / Math.PI;
+}
+
+function clampRange(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function clampSmoothingAlpha(value: number): number {
@@ -66,6 +144,11 @@ function smoothExtensionLength(track: TrackId, next: number): number {
 function resetExtensionSmoothing(): void {
   smoothedExtensionByTrack.A = null;
   smoothedExtensionByTrack.B = null;
+}
+
+function resetRefinementMemory(): void {
+  refinementMemoryByTrack.A = { dir: null, length: null };
+  refinementMemoryByTrack.B = { dir: null, length: null };
 }
 
 function trackForBodyX(bodyX: number): TrackId {
@@ -248,10 +331,166 @@ async function detectPoseMode(
       refinement.rawExtensionLength = rawExtensionLength;
       refinement.smoothedExtensionLength = smoothedExtensionLength;
       refinement.lengthSmoothingAlpha = extensionSmoothingAlphaByTrack[tuningTrack];
+
+      const memory = refinementMemoryByTrack[tuningTrack];
+      const predictedDir = normalizeDirection(baseTip.x - wrist.x, baseTip.y - wrist.y);
+      const measuredRayDir = refinement.bestDirection
+        ? normalizeDirection(refinement.bestDirection.x, refinement.bestDirection.y)
+        : null;
+      const measuredEndpointDir =
+        refinement.endpoint && Number.isFinite(refinement.endpoint.x) && Number.isFinite(refinement.endpoint.y)
+          ? normalizeDirection(refinement.endpoint.x - wrist.x, refinement.endpoint.y - wrist.y)
+          : null;
+      const measuredDir = measuredEndpointDir ?? measuredRayDir;
+
+      const angleConfidence = refinement.angleConfidence ?? refinement.confidence;
+      const endpointConfidence = refinement.endpointConfidence ?? refinement.confidence;
+      const fanMargin = refinement.fanMargin ?? 0;
+      const bestFanAngleDeg = Math.abs(refinement.bestFanAngleDeg ?? 0);
+      const trustProfile = REFINEMENT_TRUST_PROFILE[tuningTrack];
+
+      const endpointLength =
+        refinement.endpoint && Number.isFinite(refinement.endpoint.x) && Number.isFinite(refinement.endpoint.y)
+          ? Math.sqrt(
+              (refinement.endpoint.x - wrist.x) * (refinement.endpoint.x - wrist.x) +
+                (refinement.endpoint.y - wrist.y) * (refinement.endpoint.y - wrist.y)
+            )
+          : Number.NaN;
+
+      const minLength = Math.max(0.03, forearmLength * 0.45);
+      const maxLength = Math.max(minLength + 0.02, Math.min(0.95, forearmLength * 6));
+      const endpointLengthRatio =
+        Number.isFinite(endpointLength) && smoothedExtensionLength > 1e-6
+          ? endpointLength / smoothedExtensionLength
+          : Number.NaN;
+
+      const directionDeltaDeg = directionDeltaDegrees(predictedDir ?? memory.dir, measuredDir);
+
+      let trustDirection =
+        Boolean(measuredDir) &&
+        angleConfidence >= trustProfile.minDirectionConfidence &&
+        fanMargin >= trustProfile.minFanMargin &&
+        bestFanAngleDeg <= trustProfile.maxBestFanAngleDeg;
+
+      if (
+        trustDirection &&
+        typeof directionDeltaDeg === 'number' &&
+        Number.isFinite(directionDeltaDeg) &&
+        directionDeltaDeg > trustProfile.maxDirectionDeltaDeg
+      ) {
+        trustDirection = false;
+      }
+
+      let trustLength =
+        Number.isFinite(endpointLength) &&
+        endpointConfidence >= trustProfile.minLengthConfidence &&
+        Number.isFinite(endpointLengthRatio) &&
+        Math.abs(endpointLengthRatio - 1) <= trustProfile.maxLengthRatioDelta;
+
+      let selectedDir = predictedDir ?? memory.dir;
+      if (measuredDir && trustDirection) {
+        if (memory.dir) {
+          selectedDir =
+            normalizeDirection(
+              memory.dir.x * trustProfile.directionMemoryBlend + measuredDir.x * (1 - trustProfile.directionMemoryBlend),
+              memory.dir.y * trustProfile.directionMemoryBlend + measuredDir.y * (1 - trustProfile.directionMemoryBlend)
+            ) ?? measuredDir;
+        } else {
+          selectedDir = measuredDir;
+        }
+      } else if (memory.dir && trustProfile.useMemoryOnRejectedDirection) {
+        selectedDir = memory.dir;
+        refinement.reusedDirection = true;
+      } else {
+        refinement.reusedDirection = true;
+      }
+
+      let selectedLength = smoothedExtensionLength;
+      if (Number.isFinite(endpointLength) && trustLength) {
+        const measuredLength = clampRange(endpointLength, minLength, maxLength);
+        if (typeof memory.length === 'number' && Number.isFinite(memory.length)) {
+          selectedLength = memory.length + (measuredLength - memory.length) * (1 - trustProfile.lengthMemoryBlend);
+        } else {
+          selectedLength = measuredLength;
+        }
+      } else if (
+        trustProfile.useMemoryOnRejectedLength &&
+        typeof memory.length === 'number' &&
+        Number.isFinite(memory.length)
+      ) {
+        selectedLength = memory.length;
+        refinement.reusedLength = true;
+      } else {
+        refinement.reusedLength = true;
+      }
+
+      if (!selectedDir) {
+        selectedDir = normalizeDirection(seedDx, seedDy) ?? { x: 1, y: 0 };
+      }
+
+      selectedLength = clampRange(selectedLength, minLength, maxLength);
+
+      const refinedPoint = {
+        x: clamp01(wrist.x + selectedDir.x * selectedLength),
+        y: clamp01(wrist.y + selectedDir.y * selectedLength),
+      };
+
+      const shiftFromPrior = Math.sqrt(
+        (refinedPoint.x - baseTip.x) * (refinedPoint.x - baseTip.x) +
+          (refinedPoint.y - baseTip.y) * (refinedPoint.y - baseTip.y)
+      );
+      const shiftLimit =
+        fanMargin < trustProfile.lowMarginThreshold
+          ? trustProfile.maxRefinedShiftLowMargin
+          : trustProfile.maxRefinedShift;
+
+      if (shiftFromPrior > shiftLimit) {
+        trustDirection = false;
+        trustLength = false;
+        refinement.reusedDirection = true;
+        refinement.reusedLength = true;
+        refinedPoint.x = baseTip.x;
+        refinedPoint.y = baseTip.y;
+      }
+
+      const refinementAccepted = trustProfile.requireDirectionAndLengthTrust
+        ? trustDirection && trustLength
+        : !refinement.reusedDirection || !refinement.reusedLength;
+
+      if (!refinementAccepted) {
+        refinedPoint.x = baseTip.x;
+        refinedPoint.y = baseTip.y;
+        refinement.reusedDirection = true;
+        refinement.reusedLength = true;
+      } else if (trustProfile.refinedTipBlend < 0.999) {
+        const blend = clampRange(trustProfile.refinedTipBlend, 0, 1);
+        refinedPoint.x = clamp01(baseTip.x + (refinedPoint.x - baseTip.x) * blend);
+        refinedPoint.y = clamp01(baseTip.y + (refinedPoint.y - baseTip.y) * blend);
+      }
+
+      const finalShiftFromPrior = Math.sqrt(
+        (refinedPoint.x - baseTip.x) * (refinedPoint.x - baseTip.x) +
+          (refinedPoint.y - baseTip.y) * (refinedPoint.y - baseTip.y)
+      );
+
+      refinement.refined = refinedPoint;
+      refinement.directionDeltaDeg = typeof directionDeltaDeg === 'number' ? directionDeltaDeg : undefined;
+      refinement.endpointLengthRatio = Number.isFinite(endpointLengthRatio) ? endpointLengthRatio : undefined;
+      refinement.refinedShiftFromPrior = finalShiftFromPrior;
+      refinement.trustedDirection = trustDirection;
+      refinement.trustedLength = trustLength;
+      refinement.refinementAccepted = refinementAccepted;
+      refinement.reusedPrevious = Boolean(refinement.reusedDirection || refinement.reusedLength);
+
+      refinementMemoryByTrack[tuningTrack] = {
+        dir: !refinement.reusedDirection && trustDirection ? selectedDir : memory.dir,
+        length: !refinement.reusedLength && trustLength ? selectedLength : memory.length,
+      };
+
       tip = {
         ...baseTip,
-        x: refinement.refined.x,
-        y: refinement.refined.y,
+        x: refinedPoint.x,
+        y: refinedPoint.y,
         confidence: Math.max(0.05, Math.min(baseTip.confidence, 0.35 + refinement.confidence * 0.65)),
       };
     }
@@ -318,6 +557,7 @@ export async function resetCurrentDetector(): Promise<void> {
   resetHandDetector();
   fencerTracker.reset();
   resetExtensionSmoothing();
+  resetRefinementMemory();
   // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 }
