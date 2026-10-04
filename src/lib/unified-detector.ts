@@ -18,7 +18,13 @@ import {
   HAND_LANDMARKS,
   HAND_CONNECTIONS
 } from './hand-detector';
-import { estimateTip, estimateTipForArm, getFencerDirectionTuning, type TrackId } from './tip-estimator';
+import {
+  estimateTip,
+  estimateTipForArm,
+  getFencerDirectionTuning,
+  setFencerDirectionTuning,
+  type TrackId,
+} from './tip-estimator';
 import { FencerTracker, type TipCandidate } from './app/fencer-tracker';
 import { captureVideoFramePixels, refineTipFromFrame, type VideoFramePixels } from './fencers/tip-refiner';
 
@@ -121,6 +127,29 @@ interface TemplateRefinementResult {
   searchRadiusPx: number;
 }
 
+interface TemporalTrackState {
+  tip: { x: number; y: number } | null;
+  vel: { x: number; y: number };
+  dir: { x: number; y: number } | null;
+  length: number;
+  confidence: number;
+}
+
+interface AdaptiveTrackState {
+  extensionMultiplier: number | null;
+  wristWeight: number | null;
+  anchorExtensionMultiplier: number | null;
+  anchorWristWeight: number | null;
+  lastAppliedExtensionMultiplier: number | null;
+  lastAppliedWristWeight: number | null;
+  acceptanceEma: number;
+  backwardRejectEma: number;
+  lengthErrorEma: number;
+  fanMarginEma: number;
+  directionDeltaDegEma: number;
+  framesSinceUpdate: number;
+}
+
 let templateExperimentEnabled = true;
 const TEMPLATE_EXPERIMENT_TRACKS = new Set<TrackId>(['A']);
 const TEMPLATE_WIDTH = 27;
@@ -137,6 +166,31 @@ const TEMPLATE_UPDATE_MIN_SCORE = 0.42;
 const TEMPLATE_SNAPSHOT_MIN_SCORE = 0.75;
 const TEMPLATE_MAX_SNAPSHOTS = 3;
 const BACKWARD_DIRECTION_DOT_THRESHOLD = -0.08;
+let temporalRefinementEnabled = true;
+const TEMPORAL_REFINEMENT_TRACKS = new Set<TrackId>(['A']);
+const TEMPORAL_PRIOR_WEIGHT = 0.1739;
+const TEMPORAL_PRIOR_MAX_SHIFT_PX = 34.99;
+const TEMPORAL_DIR_ALPHA = 0.052;
+const TEMPORAL_LENGTH_ALPHA = 0.366;
+const TEMPORAL_VEL_ALPHA = 0.4928;
+const TEMPORAL_EXPECTED_BLEND = 0.3555;
+const TEMPORAL_MAX_STEP_PX = 10.07;
+let adaptiveFencerTuningEnabled = true;
+const ADAPTIVE_TUNING_TRACKS = new Set<TrackId>(['A', 'B']);
+const ADAPTIVE_EMA_ALPHA = 0.14;
+const ADAPTIVE_UPDATE_INTERVAL_FRAMES = 8;
+const ADAPTIVE_EXTERNAL_EXTENSION_OVERRIDE_DELTA = 0.12;
+const ADAPTIVE_EXTERNAL_WRIST_OVERRIDE_DELTA = 0.08;
+
+const ADAPTIVE_EXTENSION_BOUNDS: Record<TrackId, { min: number; max: number }> = {
+  A: { min: 3.6, max: 4.8 },
+  B: { min: 3.6, max: 4.8 },
+};
+
+const ADAPTIVE_WRIST_BOUNDS: Record<TrackId, { min: number; max: number }> = {
+  A: { min: 0.2, max: 0.7 },
+  B: { min: 0.35, max: 1.0 },
+};
 
 const templateWeightMask = (() => {
   const size = TEMPLATE_WIDTH * TEMPLATE_HEIGHT;
@@ -174,9 +228,105 @@ const templateStateByTrack: Record<TrackId, TemplateTrackState> = {
   B: { dynamic: null, snapshots: [] },
 };
 
+const temporalStateByTrack: Record<TrackId, TemporalTrackState> = {
+  A: {
+    tip: null,
+    vel: { x: 0, y: 0 },
+    dir: null,
+    length: 0,
+    confidence: 0,
+  },
+  B: {
+    tip: null,
+    vel: { x: 0, y: 0 },
+    dir: null,
+    length: 0,
+    confidence: 0,
+  },
+};
+
+const adaptiveTuningStateByTrack: Record<TrackId, AdaptiveTrackState> = {
+  A: {
+    extensionMultiplier: null,
+    wristWeight: null,
+    anchorExtensionMultiplier: null,
+    anchorWristWeight: null,
+    lastAppliedExtensionMultiplier: null,
+    lastAppliedWristWeight: null,
+    acceptanceEma: 0.5,
+    backwardRejectEma: 0,
+    lengthErrorEma: 0,
+    fanMarginEma: 0,
+    directionDeltaDegEma: 0,
+    framesSinceUpdate: 0,
+  },
+  B: {
+    extensionMultiplier: null,
+    wristWeight: null,
+    anchorExtensionMultiplier: null,
+    anchorWristWeight: null,
+    lastAppliedExtensionMultiplier: null,
+    lastAppliedWristWeight: null,
+    acceptanceEma: 0.5,
+    backwardRejectEma: 0,
+    lengthErrorEma: 0,
+    fanMarginEma: 0,
+    directionDeltaDegEma: 0,
+    framesSinceUpdate: 0,
+  },
+};
+
 function resetTemplateRefinementMemory(): void {
   templateStateByTrack.A = { dynamic: null, snapshots: [] };
   templateStateByTrack.B = { dynamic: null, snapshots: [] };
+}
+
+function resetTemporalRefinementMemory(): void {
+  temporalStateByTrack.A = {
+    tip: null,
+    vel: { x: 0, y: 0 },
+    dir: null,
+    length: 0,
+    confidence: 0,
+  };
+  temporalStateByTrack.B = {
+    tip: null,
+    vel: { x: 0, y: 0 },
+    dir: null,
+    length: 0,
+    confidence: 0,
+  };
+}
+
+function resetAdaptiveTuningState(): void {
+  adaptiveTuningStateByTrack.A = {
+    extensionMultiplier: null,
+    wristWeight: null,
+    anchorExtensionMultiplier: null,
+    anchorWristWeight: null,
+    lastAppliedExtensionMultiplier: null,
+    lastAppliedWristWeight: null,
+    acceptanceEma: 0.5,
+    backwardRejectEma: 0,
+    lengthErrorEma: 0,
+    fanMarginEma: 0,
+    directionDeltaDegEma: 0,
+    framesSinceUpdate: 0,
+  };
+  adaptiveTuningStateByTrack.B = {
+    extensionMultiplier: null,
+    wristWeight: null,
+    anchorExtensionMultiplier: null,
+    anchorWristWeight: null,
+    lastAppliedExtensionMultiplier: null,
+    lastAppliedWristWeight: null,
+    acceptanceEma: 0.5,
+    backwardRejectEma: 0,
+    lengthErrorEma: 0,
+    fanMarginEma: 0,
+    directionDeltaDegEma: 0,
+    framesSinceUpdate: 0,
+  };
 }
 
 function frameToLuma(frame: VideoFramePixels): LumaFrame {
@@ -400,6 +550,299 @@ function applyTemplateRefinement(
   };
 }
 
+function distancePxBetweenNormalized(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  frameWidth: number,
+  frameHeight: number
+): number {
+  const dx = (a.x - b.x) * frameWidth;
+  const dy = (a.y - b.y) * frameHeight;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function blendPoint(
+  base: { x: number; y: number },
+  target: { x: number; y: number },
+  alpha: number
+): { x: number; y: number } {
+  const w = clampRange(alpha, 0, 1);
+  return {
+    x: clamp01(base.x + (target.x - base.x) * w),
+    y: clamp01(base.y + (target.y - base.y) * w),
+  };
+}
+
+function applyTemporalTipStabilization(
+  track: TrackId,
+  wrist: { x: number; y: number },
+  tip: { x: number; y: number },
+  sourceWidth: number,
+  sourceHeight: number,
+  refinementApplied: boolean,
+  measurementConfidence: number
+): {
+  tip: { x: number; y: number };
+  expectedTip?: { x: number; y: number };
+  priorBlend: number;
+  pull: number;
+  stateConfidence: number;
+} {
+  if (!temporalRefinementEnabled || !TEMPORAL_REFINEMENT_TRACKS.has(track)) {
+    return {
+      tip,
+      priorBlend: 0,
+      pull: 0,
+      stateConfidence: 0,
+    };
+  }
+
+  const width = Math.max(1, sourceWidth);
+  const height = Math.max(1, sourceHeight);
+  const state = temporalStateByTrack[track];
+
+  let outTip = { x: clamp01(tip.x), y: clamp01(tip.y) };
+  let expectedTip: { x: number; y: number } | undefined;
+  let priorBlend = 0;
+  let pull = 0;
+
+  if (state.dir && state.length > 1e-5) {
+    expectedTip = {
+      x: clamp01(wrist.x + state.dir.x * state.length + state.vel.x),
+      y: clamp01(wrist.y + state.dir.y * state.length + state.vel.y),
+    };
+
+    const expectedShiftPx = distancePxBetweenNormalized(expectedTip, outTip, width, height);
+    if (expectedShiftPx <= TEMPORAL_PRIOR_MAX_SHIFT_PX) {
+      priorBlend = clampRange(TEMPORAL_PRIOR_WEIGHT * clamp01(state.confidence), 0, TEMPORAL_PRIOR_WEIGHT);
+      outTip = blendPoint(outTip, expectedTip, priorBlend);
+    }
+
+    pull = clampRange(TEMPORAL_EXPECTED_BLEND * clamp01(state.confidence), 0, 0.75);
+    const appliedPull = refinementApplied ? pull : pull * 0.5;
+    outTip = blendPoint(outTip, expectedTip, appliedPull);
+    pull = appliedPull;
+  }
+
+  const measuredDir = normalizeDirection(outTip.x - wrist.x, outTip.y - wrist.y);
+  const measuredLength = Math.sqrt(
+    (outTip.x - wrist.x) * (outTip.x - wrist.x) + (outTip.y - wrist.y) * (outTip.y - wrist.y)
+  );
+
+  let nextVel = state.vel;
+  if (state.tip) {
+    let targetVel = {
+      x: outTip.x - state.tip.x,
+      y: outTip.y - state.tip.y,
+    };
+    const stepPx = Math.sqrt((targetVel.x * width) * (targetVel.x * width) + (targetVel.y * height) * (targetVel.y * height));
+    if (stepPx > TEMPORAL_MAX_STEP_PX && stepPx > 1e-6) {
+      const scale = TEMPORAL_MAX_STEP_PX / stepPx;
+      targetVel = {
+        x: targetVel.x * scale,
+        y: targetVel.y * scale,
+      };
+    }
+    nextVel = {
+      x: state.vel.x * (1 - TEMPORAL_VEL_ALPHA) + targetVel.x * TEMPORAL_VEL_ALPHA,
+      y: state.vel.y * (1 - TEMPORAL_VEL_ALPHA) + targetVel.y * TEMPORAL_VEL_ALPHA,
+    };
+  }
+
+  const nextDir = measuredDir
+    ? normalizeDirection(
+        (state.dir?.x ?? measuredDir.x) * (1 - TEMPORAL_DIR_ALPHA) + measuredDir.x * TEMPORAL_DIR_ALPHA,
+        (state.dir?.y ?? measuredDir.y) * (1 - TEMPORAL_DIR_ALPHA) + measuredDir.y * TEMPORAL_DIR_ALPHA
+      ) ?? measuredDir
+    : state.dir;
+
+  const nextLength =
+    Number.isFinite(measuredLength) && measuredLength > 1e-6
+      ? state.length > 1e-6
+        ? state.length * (1 - TEMPORAL_LENGTH_ALPHA) + measuredLength * TEMPORAL_LENGTH_ALPHA
+        : measuredLength
+      : state.length;
+
+  let measuredConfidence = clamp01(measurementConfidence);
+  if (!refinementApplied) {
+    measuredConfidence = Math.max(0.06, measuredConfidence * 0.4);
+  }
+  const nextConfidence = clamp01(state.confidence * 0.72 + measuredConfidence * 0.28);
+
+  temporalStateByTrack[track] = {
+    tip: outTip,
+    vel: nextVel,
+    dir: nextDir,
+    length: nextLength,
+    confidence: nextConfidence,
+  };
+
+  return {
+    tip: outTip,
+    expectedTip,
+    priorBlend,
+    pull,
+    stateConfidence: nextConfidence,
+  };
+}
+
+function updateEma(prev: number, next: number, alpha: number): number {
+  return prev * (1 - alpha) + next * alpha;
+}
+
+function maybeAdoptManualTuningOverride(track: TrackId, currentExtension: number, currentWristWeight: number): void {
+  const state = adaptiveTuningStateByTrack[track];
+
+  if (state.extensionMultiplier === null) {
+    state.extensionMultiplier = currentExtension;
+    state.anchorExtensionMultiplier = currentExtension;
+    state.lastAppliedExtensionMultiplier = currentExtension;
+  } else if (
+    state.lastAppliedExtensionMultiplier !== null &&
+    Math.abs(currentExtension - state.lastAppliedExtensionMultiplier) >= ADAPTIVE_EXTERNAL_EXTENSION_OVERRIDE_DELTA
+  ) {
+    state.extensionMultiplier = currentExtension;
+    state.anchorExtensionMultiplier = currentExtension;
+    state.lastAppliedExtensionMultiplier = currentExtension;
+  }
+
+  if (state.wristWeight === null) {
+    state.wristWeight = currentWristWeight;
+    state.anchorWristWeight = currentWristWeight;
+    state.lastAppliedWristWeight = currentWristWeight;
+  } else if (
+    state.lastAppliedWristWeight !== null &&
+    Math.abs(currentWristWeight - state.lastAppliedWristWeight) >= ADAPTIVE_EXTERNAL_WRIST_OVERRIDE_DELTA
+  ) {
+    state.wristWeight = currentWristWeight;
+    state.anchorWristWeight = currentWristWeight;
+    state.lastAppliedWristWeight = currentWristWeight;
+  }
+}
+
+function applyAdaptiveFencerTuning(
+  track: TrackId,
+  metrics: {
+    refinementAccepted: boolean;
+    rejectedBackward: boolean;
+    endpointLengthRatio?: number;
+    fanMargin: number;
+    directionDeltaDeg?: number;
+  }
+): {
+  extensionMultiplier: number;
+  wristWeight: number;
+  acceptanceEma: number;
+  backwardRejectEma: number;
+  lengthErrorEma: number;
+  fanMarginEma: number;
+} | null {
+  if (!adaptiveFencerTuningEnabled || !ADAPTIVE_TUNING_TRACKS.has(track)) {
+    return null;
+  }
+
+  const state = adaptiveTuningStateByTrack[track];
+  const current = getFencerDirectionTuning(track);
+  maybeAdoptManualTuningOverride(track, current.extensionMultiplier, current.wristWeight);
+
+  const lengthError =
+    typeof metrics.endpointLengthRatio === 'number' && Number.isFinite(metrics.endpointLengthRatio)
+      ? Math.min(1.2, Math.abs(metrics.endpointLengthRatio - 1))
+      : state.lengthErrorEma;
+  const directionDeltaNorm =
+    typeof metrics.directionDeltaDeg === 'number' && Number.isFinite(metrics.directionDeltaDeg)
+      ? Math.min(90, Math.abs(metrics.directionDeltaDeg))
+      : state.directionDeltaDegEma;
+
+  state.acceptanceEma = updateEma(state.acceptanceEma, metrics.refinementAccepted ? 1 : 0, ADAPTIVE_EMA_ALPHA);
+  state.backwardRejectEma = updateEma(state.backwardRejectEma, metrics.rejectedBackward ? 1 : 0, ADAPTIVE_EMA_ALPHA);
+  state.lengthErrorEma = updateEma(state.lengthErrorEma, lengthError, ADAPTIVE_EMA_ALPHA);
+  state.fanMarginEma = updateEma(state.fanMarginEma, clampRange(metrics.fanMargin, 0, 1), ADAPTIVE_EMA_ALPHA);
+  state.directionDeltaDegEma = updateEma(state.directionDeltaDegEma, directionDeltaNorm, ADAPTIVE_EMA_ALPHA);
+  state.framesSinceUpdate += 1;
+
+  const extension = state.extensionMultiplier ?? current.extensionMultiplier;
+  const wristWeight = state.wristWeight ?? current.wristWeight;
+
+  if (state.framesSinceUpdate < ADAPTIVE_UPDATE_INTERVAL_FRAMES) {
+    return {
+      extensionMultiplier: extension,
+      wristWeight,
+      acceptanceEma: state.acceptanceEma,
+      backwardRejectEma: state.backwardRejectEma,
+      lengthErrorEma: state.lengthErrorEma,
+      fanMarginEma: state.fanMarginEma,
+    };
+  }
+  state.framesSinceUpdate = 0;
+
+  const bounds = ADAPTIVE_EXTENSION_BOUNDS[track];
+  let nextExtension = extension;
+  let extensionDelta = 0;
+
+  if (state.acceptanceEma < 0.34 && state.lengthErrorEma > 0.2) {
+    extensionDelta += 0.07;
+  }
+  if (state.acceptanceEma < 0.28 && state.fanMarginEma < 0.06) {
+    extensionDelta += 0.04;
+  }
+  if (state.backwardRejectEma > 0.12 || state.directionDeltaDegEma > 30 || state.lengthErrorEma > 0.46) {
+    extensionDelta -= 0.08;
+  }
+  if (state.acceptanceEma > 0.62 && state.backwardRejectEma < 0.05 && state.lengthErrorEma < 0.15) {
+    const anchor = state.anchorExtensionMultiplier ?? extension;
+    extensionDelta += (anchor - extension) * 0.2;
+  }
+
+  if (Math.abs(extensionDelta) > 0.005) {
+    nextExtension = clampRange(extension + extensionDelta, bounds.min, bounds.max);
+  }
+
+  const wristBounds = ADAPTIVE_WRIST_BOUNDS[track];
+  let nextWristWeight = wristWeight;
+  if (track === 'B') {
+    let wristDelta = 0;
+    if (state.acceptanceEma < 0.33 || state.backwardRejectEma > 0.1 || state.fanMarginEma < 0.05) {
+      wristDelta += 0.05;
+    }
+    if (state.acceptanceEma > 0.58 && state.backwardRejectEma < 0.05 && state.directionDeltaDegEma < 20) {
+      wristDelta -= 0.03;
+    }
+    if (state.acceptanceEma > 0.68 && state.lengthErrorEma < 0.12) {
+      const anchorWrist = state.anchorWristWeight ?? wristWeight;
+      wristDelta += (anchorWrist - wristWeight) * 0.25;
+    }
+    if (Math.abs(wristDelta) > 0.005) {
+      nextWristWeight = clampRange(wristWeight + wristDelta, wristBounds.min, wristBounds.max);
+    }
+  }
+
+  const patch: { extensionMultiplier?: number; wristWeight?: number } = {};
+  if (Math.abs(nextExtension - current.extensionMultiplier) > 0.001) {
+    patch.extensionMultiplier = nextExtension;
+  }
+  if (Math.abs(nextWristWeight - current.wristWeight) > 0.001) {
+    patch.wristWeight = nextWristWeight;
+  }
+  if (patch.extensionMultiplier !== undefined || patch.wristWeight !== undefined) {
+    setFencerDirectionTuning(track, patch);
+  }
+
+  state.extensionMultiplier = nextExtension;
+  state.wristWeight = nextWristWeight;
+  state.lastAppliedExtensionMultiplier = nextExtension;
+  state.lastAppliedWristWeight = nextWristWeight;
+
+  return {
+    extensionMultiplier: nextExtension,
+    wristWeight: nextWristWeight,
+    acceptanceEma: state.acceptanceEma,
+    backwardRejectEma: state.backwardRejectEma,
+    lengthErrorEma: state.lengthErrorEma,
+    fanMarginEma: state.fanMarginEma,
+  };
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -449,6 +892,28 @@ export function setFencerTemplateRefinementEnabled(enabled: boolean): void {
 
 export function isFencerTemplateRefinementEnabled(): boolean {
   return templateExperimentEnabled;
+}
+
+export function setFencerTemporalRefinementEnabled(enabled: boolean): void {
+  temporalRefinementEnabled = enabled;
+  if (!enabled) {
+    resetTemporalRefinementMemory();
+  }
+}
+
+export function isFencerTemporalRefinementEnabled(): boolean {
+  return temporalRefinementEnabled;
+}
+
+export function setFencerAdaptiveTuningEnabled(enabled: boolean): void {
+  adaptiveFencerTuningEnabled = enabled;
+  if (!enabled) {
+    resetAdaptiveTuningState();
+  }
+}
+
+export function isFencerAdaptiveTuningEnabled(): boolean {
+  return adaptiveFencerTuningEnabled;
 }
 
 function smoothExtensionLength(track: TrackId, next: number): number {
@@ -578,6 +1043,8 @@ async function detectPoseMode(
   const refinementFrame =
     inFencersMode && fencerTipRefinementEnabled ? captureVideoFramePixels(video) : null;
   const lumaFrame = refinementFrame && templateExperimentEnabled ? frameToLuma(refinementFrame) : null;
+  const sourceWidth = Math.max(1, video.videoWidth || refinementFrame?.width || 1920);
+  const sourceHeight = Math.max(1, video.videoHeight || refinementFrame?.height || 1080);
 
   const candidates: TipCandidate[] = [];
   for (const pose of poses.slice(0, 2)) {
@@ -812,8 +1279,48 @@ async function detectPoseMode(
         }
       }
 
-      const finalDir = normalizeDirection(refinedPoint.x - wrist.x, refinedPoint.y - wrist.y);
-      const backwardDot = finalDir ? forearmDir.x * finalDir.x + forearmDir.y * finalDir.y : null;
+      let finalDir = normalizeDirection(refinedPoint.x - wrist.x, refinedPoint.y - wrist.y);
+      let backwardDot = finalDir ? forearmDir.x * finalDir.x + forearmDir.y * finalDir.y : null;
+      if (
+        typeof backwardDot === 'number' &&
+        Number.isFinite(backwardDot) &&
+        backwardDot < BACKWARD_DIRECTION_DOT_THRESHOLD
+      ) {
+        refinedPoint.x = baseTip.x;
+        refinedPoint.y = baseTip.y;
+        refinementAccepted = false;
+        refinement.reusedDirection = true;
+        refinement.reusedLength = true;
+        refinement.rejectedBackward = true;
+      }
+
+      const measurementConfidence = clamp01(
+        Math.max(
+          refinement.confidence,
+          refinement.endpointConfidence ?? refinement.confidence,
+          refinement.templateApplied ? 0.72 : 0
+        )
+      );
+      const temporalResult = applyTemporalTipStabilization(
+        tuningTrack,
+        { x: wrist.x, y: wrist.y },
+        { x: refinedPoint.x, y: refinedPoint.y },
+        sourceWidth,
+        sourceHeight,
+        refinementAccepted,
+        measurementConfidence
+      );
+      refinedPoint.x = temporalResult.tip.x;
+      refinedPoint.y = temporalResult.tip.y;
+      refinement.temporalPriorBlend = temporalResult.priorBlend;
+      refinement.temporalPull = temporalResult.pull;
+      refinement.temporalStateConfidence = temporalResult.stateConfidence;
+      if (temporalResult.expectedTip) {
+        refinement.temporalExpected = temporalResult.expectedTip;
+      }
+
+      finalDir = normalizeDirection(refinedPoint.x - wrist.x, refinedPoint.y - wrist.y);
+      backwardDot = finalDir ? forearmDir.x * finalDir.x + forearmDir.y * finalDir.y : null;
       if (
         typeof backwardDot === 'number' &&
         Number.isFinite(backwardDot) &&
@@ -841,6 +1348,22 @@ async function detectPoseMode(
       refinement.trustedLength = trustLength;
       refinement.refinementAccepted = refinementAccepted;
       refinement.reusedPrevious = Boolean(refinement.reusedDirection || refinement.reusedLength);
+
+      const adaptiveTuning = applyAdaptiveFencerTuning(tuningTrack, {
+        refinementAccepted,
+        rejectedBackward: Boolean(refinement.rejectedBackward),
+        endpointLengthRatio: Number.isFinite(endpointLengthRatio) ? endpointLengthRatio : undefined,
+        fanMargin,
+        directionDeltaDeg: typeof directionDeltaDeg === 'number' ? directionDeltaDeg : undefined,
+      });
+      if (adaptiveTuning) {
+        refinement.adaptiveExtensionMultiplier = adaptiveTuning.extensionMultiplier;
+        refinement.adaptiveWristWeight = adaptiveTuning.wristWeight;
+        refinement.adaptiveAcceptanceEma = adaptiveTuning.acceptanceEma;
+        refinement.adaptiveBackwardRejectEma = adaptiveTuning.backwardRejectEma;
+        refinement.adaptiveLengthErrorEma = adaptiveTuning.lengthErrorEma;
+        refinement.adaptiveFanMarginEma = adaptiveTuning.fanMarginEma;
+      }
 
       refinementMemoryByTrack[tuningTrack] = {
         dir: !refinement.reusedDirection && trustDirection ? selectedDir : memory.dir,
@@ -919,6 +1442,8 @@ export async function resetCurrentDetector(): Promise<void> {
   resetExtensionSmoothing();
   resetRefinementMemory();
   resetTemplateRefinementMemory();
+  resetTemporalRefinementMemory();
+  resetAdaptiveTuningState();
   // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 }

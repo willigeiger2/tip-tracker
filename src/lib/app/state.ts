@@ -42,8 +42,8 @@ export const DEFAULT_APP_STATE: AppState = {
   fencerBWristWeight: 0.35,
   fencerAAngleOffsetDeg: 0,
   fencerBAngleOffsetDeg: 0,
-  fencerATipExtension: 3.6,
-  fencerBTipExtension: 3.6,
+  fencerATipExtension: 4.4,
+  fencerBTipExtension: 4.4,
   fencerALengthSmoothingAlpha: 0.68,
   fencerBLengthSmoothingAlpha: 0.68,
 };

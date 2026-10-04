@@ -20,13 +20,15 @@ import Transport from '../components/Transport.astro';
     initDetector,
     detect,
     resetCurrentDetector,
+    isFencerAdaptiveTuningEnabled,
+    setFencerAdaptiveTuningEnabled,
     setFencerLengthSmoothingAlpha,
     setFencerTipRefinementEnabled,
   } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager } from '../lib/effects';
-  import { setFencerDirectionTuning, setPoseTipExtension } from '../lib/tip-estimator';
+  import { getFencerDirectionTuning, setFencerDirectionTuning, setPoseTipExtension } from '../lib/tip-estimator';
   import {
     DEFAULT_FRAME_RATE,
     detectVideoFrameRate,
@@ -83,6 +85,13 @@ import Transport from '../components/Transport.astro';
     if (!el) throw new Error(`Missing element #${id}`);
     return el as unknown as T;
   }
+
+  const tipTrackDebugWindow = window as Window & {
+    setFencerAdaptiveTuningEnabled?: (enabled: boolean) => void;
+    isFencerAdaptiveTuningEnabled?: () => boolean;
+  };
+  tipTrackDebugWindow.setFencerAdaptiveTuningEnabled = setFencerAdaptiveTuningEnabled;
+  tipTrackDebugWindow.isFencerAdaptiveTuningEnabled = isFencerAdaptiveTuningEnabled;
 
   // ---- DOM ----
   const container = byId<HTMLDivElement>('container');
@@ -799,6 +808,7 @@ import Transport from '../components/Transport.astro';
         debugMode: appState.get().debugMode,
         inferenceFps: appState.get().inferenceFps,
         refinementEnabled: fencersTipRefinementEnabledInput.checked,
+        adaptiveTuningEnabled: isFencerAdaptiveTuningEnabled(),
         fencerATipExtension: appState.get().fencerATipExtension,
         fencerBTipExtension: appState.get().fencerBTipExtension,
         fencerALengthSmoothing: appState.get().fencerALengthSmoothingAlpha,
@@ -1629,15 +1639,18 @@ import Transport from '../components/Transport.astro';
 
     if (frame.debugMode === 'skeleton' || frame.debugMode === 'all') {
       const state = appState.get();
-      const aExt = state.fencerATipExtension.toFixed(1);
-      const bExt = state.fencerBTipExtension.toFixed(1);
+      const activeA = getFencerDirectionTuning('A');
+      const activeB = getFencerDirectionTuning('B');
+      const aExt = activeA.extensionMultiplier.toFixed(1);
+      const bExt = activeB.extensionMultiplier.toFixed(1);
       const aSmooth = state.fencerALengthSmoothingAlpha.toFixed(2);
       const bSmooth = state.fencerBLengthSmoothingAlpha.toFixed(2);
       const aAlpha = (1 - state.fencerALengthSmoothingAlpha).toFixed(2);
       const bAlpha = (1 - state.fencerBLengthSmoothingAlpha).toFixed(2);
       const refinementMode = fencersTipRefinementEnabledInput.checked ? 'on' : 'off';
-      const aWrist = Math.round(state.fencerAWristWeight * 100);
-      const bWrist = Math.round(state.fencerBWristWeight * 100);
+      const adaptiveMode = isFencerAdaptiveTuningEnabled() ? 'on' : 'off';
+      const aWrist = Math.round(activeA.wristWeight * 100);
+      const bWrist = Math.round(activeB.wristWeight * 100);
       const aAngle = Math.round(state.fencerAAngleOffsetDeg);
       const bAngle = Math.round(state.fencerBAngleOffsetDeg);
       const aDiag = lengthDiagnostics.get('A');
@@ -1657,7 +1670,7 @@ import Transport from '../components/Transport.astro';
       ctx.textBaseline = 'middle';
       ctx.fillText('Blade lines: F=Forearm W=Wrist B=Blend+Angle', 16, 21);
       ctx.fillText(
-        `R:${refinementMode} | A E${aExt}x S${aSmooth}/a${aAlpha} W${aWrist}% A${aAngle}deg | B E${bExt}x S${bSmooth}/a${bAlpha} W${bWrist}% A${bAngle}deg`,
+        `R:${refinementMode} AD:${adaptiveMode} | A E${aExt}x S${aSmooth}/a${aAlpha} W${aWrist}% A${aAngle}deg | B E${bExt}x S${bSmooth}/a${bAlpha} W${bWrist}% A${bAngle}deg`,
         16,
         36
       );

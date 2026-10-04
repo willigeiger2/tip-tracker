@@ -121,6 +121,16 @@ export interface TipRefinementDebug {
   templateTemplateIndex?: number;
   templateShiftFromPrior?: number;
   templateSearchRadiusPx?: number;
+  temporalExpected?: { x: number; y: number };
+  temporalPriorBlend?: number;
+  temporalPull?: number;
+  temporalStateConfidence?: number;
+  adaptiveExtensionMultiplier?: number;
+  adaptiveWristWeight?: number;
+  adaptiveAcceptanceEma?: number;
+  adaptiveBackwardRejectEma?: number;
+  adaptiveLengthErrorEma?: number;
+  adaptiveFanMarginEma?: number;
   usedRefined: boolean;
 }
 
