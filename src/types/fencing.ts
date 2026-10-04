@@ -112,6 +112,15 @@ export interface TipRefinementDebug {
   reusedPrevious?: boolean;
   reusedDirection?: boolean;
   reusedLength?: boolean;
+  rejectedBackward?: boolean;
+  backwardDot?: number;
+  templateApplied?: boolean;
+  templateScore?: number;
+  templateSecondScore?: number;
+  templateMargin?: number;
+  templateTemplateIndex?: number;
+  templateShiftFromPrior?: number;
+  templateSearchRadiusPx?: number;
   usedRefined: boolean;
 }
 
