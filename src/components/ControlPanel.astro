@@ -56,7 +56,51 @@
         <input id="fencersDebugOverlay" type="checkbox" />
         <span>Fencers debug overlay</span>
       </label>
-      <small class="hint">Shows prior/refined tip points and confidence in fencers mode.</small>
+
+      <div class="fencer-tuning-grid">
+        <div class="fencer-tuning-card">
+          <h3>Fencer A (Green)</h3>
+          <label for="fencerAWeaponArm">Weapon Arm</label>
+          <select id="fencerAWeaponArm">
+            <option value="auto" selected>Auto (forward-most)</option>
+            <option value="right">Right (pose label)</option>
+            <option value="left">Left (pose label)</option>
+          </select>
+          <label for="fencerATipExtension">Tip Extension: <span id="fencerATipExtensionValue">4.4</span>x</label>
+          <input id="fencerATipExtension" type="range" min="1" max="8" value="4.4" step="0.1" />
+          <label for="fencerALengthSmoothingAlpha">Length Smoothing: <span id="fencerALengthSmoothingAlphaValue">0.68</span></label>
+          <input id="fencerALengthSmoothingAlpha" type="range" min="0" max="1" value="0.68" step="0.01" />
+          <label for="fencerAWristWeight">Wrist Blend: <span id="fencerAWristWeightValue">35</span>%</label>
+          <input id="fencerAWristWeight" type="range" min="0" max="100" value="35" step="1" />
+          <label for="fencerAAngleOffset">Angle Adjust: <span id="fencerAAngleOffsetValue">0</span>&deg;</label>
+          <input id="fencerAAngleOffset" type="range" min="-30" max="30" value="0" step="1" />
+        </div>
+
+        <div class="fencer-tuning-card">
+          <h3>Fencer B (Red)</h3>
+          <label for="fencerBWeaponArm">Weapon Arm</label>
+          <select id="fencerBWeaponArm">
+            <option value="auto" selected>Auto (forward-most)</option>
+            <option value="right">Right (pose label)</option>
+            <option value="left">Left (pose label)</option>
+          </select>
+          <label for="fencerBTipExtension">Tip Extension: <span id="fencerBTipExtensionValue">4.4</span>x</label>
+          <input id="fencerBTipExtension" type="range" min="1" max="8" value="4.4" step="0.1" />
+          <label for="fencerBLengthSmoothingAlpha">Length Smoothing: <span id="fencerBLengthSmoothingAlphaValue">0.68</span></label>
+          <input id="fencerBLengthSmoothingAlpha" type="range" min="0" max="1" value="0.68" step="0.01" />
+          <label for="fencerBWristWeight">Wrist Blend: <span id="fencerBWristWeightValue">35</span>%</label>
+          <input id="fencerBWristWeight" type="range" min="0" max="100" value="35" step="1" />
+          <label for="fencerBAngleOffset">Angle Adjust: <span id="fencerBAngleOffsetValue">0</span>&deg;</label>
+          <input id="fencerBAngleOffset" type="range" min="-30" max="30" value="0" step="1" />
+        </div>
+      </div>
+
+      <small class="hint">0.00 = no smoothing, 1.00 = strongest smoothing. Skeleton/all shows F, W, and B direction lines.</small>
+      <div class="recorded-actions">
+        <button id="fencersTraceReset" type="button" class="btn-secondary compact-btn">Reset Trace</button>
+        <button id="fencersTraceExport" type="button" class="btn-secondary compact-btn">Export Trace</button>
+      </div>
+      <small id="fencersTraceStatus" class="hint">Trace: 0 entries.</small>
     </div>
   </div>
 
@@ -115,6 +159,15 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div id="savedVideosPanel" class="control-group video-only hidden">
+    <div class="recorded-list-header">
+      <span>Saved Videos</span>
+      <button id="savedVideosRefresh" type="button" class="saved-videos-refresh">Refresh</button>
+    </div>
+    <div id="savedVideosList" class="recorded-keyframe-list"></div>
+    <span id="savedVideosStatus" class="hint">Video library unavailable until a video source is active.</span>
   </div>
 
   <div class="control-group">
@@ -186,14 +239,14 @@
     </div>
     <div class="control-group">
       <label for="poseTipExtension">
-        Pose Tip Extension: <span id="poseTipExtensionValue">4.2</span>x
+        Pose Mode Tip Extension: <span id="poseTipExtensionValue">3.6</span>x
       </label>
       <input
         type="range"
         id="poseTipExtension"
         min="1"
         max="8"
-        value="4.2"
+        value="3.6"
         step="0.1"
       />
       <small class="hint">Pose mode only. Higher values push the tip farther past the wrist.</small>
@@ -440,6 +493,39 @@
     margin: 0;
   }
 
+  .fencer-tuning-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin: 10px 0 6px;
+  }
+
+  .fencer-tuning-card {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .fencer-tuning-card h3 {
+    margin: 0 0 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .fencer-tuning-card label {
+    margin-bottom: 4px;
+  }
+
+  .fencer-tuning-card input[type='range'] {
+    margin-bottom: 8px;
+  }
+
+  .fencer-tuning-card input[type='range']:last-child {
+    margin-bottom: 0;
+  }
+
   .recorded-editor-grid {
     display: grid;
     grid-template-columns: 1fr;
@@ -489,6 +575,69 @@
 
   .recorded-keyframe-delete {
     min-width: 46px;
+  }
+
+  .saved-videos-refresh {
+    width: auto;
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 0.72rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.92);
+  }
+
+  .saved-video-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 6px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .saved-video-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .saved-video-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .saved-video-title {
+    font-size: 0.79rem;
+    color: rgba(255, 255, 255, 0.95);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .saved-video-meta {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.62);
+  }
+
+  .saved-video-load {
+    width: auto;
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 0.74rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.95);
+    align-self: center;
+  }
+
+  .saved-video-load.active {
+    border-color: rgba(54, 214, 122, 0.8);
+    color: #36d67a;
   }
 
   .hidden {

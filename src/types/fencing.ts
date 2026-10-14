@@ -75,29 +75,33 @@ export type EffectMode =
 // Tracking mode: hand, full-body pose, specialized two-fencer pose, or recorded keyframes.
 export type TrackingMode = 'pose' | 'fencers' | 'hand' | 'recorded';
 
-export interface TipRefinementDebug {
-  prior: { x: number; y: number };
-  refined: { x: number; y: number };
-  searchStart: { x: number; y: number };
-  searchEnd: { x: number; y: number };
-  confidence: number;
-  edgeScore: number;
-  usedRefined: boolean;
-}
-
 // Unified detection result - works for both pose and hand modes
 export interface DetectionResult {
   id: string;           // 'A' or 'B'
   side: 'left' | 'right';
   tip: TipPosition;
   landmarks: Landmark[];  // All landmarks for this detection
+  arm?: 'left' | 'right'; // MediaPipe label of the selected weapon-arm wrist (fencers)
+  armMargin?: number | null; // forwardness lead of chosen wrist over the other (fencers, auto arm)
   handedness?: 'Left' | 'Right';  // actual hand side (hand mode only)
-  refinement?: TipRefinementDebug;
+  rawExtensionLength?: number; // fencers length before smoothing
+  smoothedExtensionLength?: number; // fencers length after smoothing
+  lengthSmoothingAlpha?: number; // internal EMA alpha (0-1)
 }
 
 // Tip estimator function type - modular and swappable
 export type TipEstimator = (
   wrist: Landmark,
   elbow: Landmark,
-  shoulder?: Landmark  // optional for more context
+  shoulder?: Landmark,  // optional for more context
+  options?: {
+    handHints?: {
+      index?: Landmark;
+      thumb?: Landmark;
+      pinky?: Landmark;
+    };
+    wristWeight?: number;
+    angleOffsetDeg?: number;
+    extensionMultiplier?: number;
+  }
 ) => { x: number; y: number; confidence: number };

@@ -16,11 +16,18 @@ import Transport from '../components/Transport.astro';
 
 <script>
   // Page bootstrap: look up DOM elements, construct app modules, bind UI events.
-  import { initDetector, detect, resetCurrentDetector } from '../lib/unified-detector';
+  import {
+    initDetector,
+    detect,
+    resetCurrentDetector,
+    setFencerLengthSmoothingAlpha,
+    setFencerWeaponArm,
+  } from '../lib/unified-detector';
+  import type { WeaponArmMode } from '../lib/fencers/arm-selector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager } from '../lib/effects';
-  import { setPoseTipExtension } from '../lib/tip-estimator';
+  import { setFencerDirectionTuning, setPoseTipExtension } from '../lib/tip-estimator';
   import {
     DEFAULT_FRAME_RATE,
     detectVideoFrameRate,
@@ -46,9 +53,21 @@ import Transport from '../components/Transport.astro';
     keyframeCount,
     loadTrackSet,
     saveTrackSet,
+    trackSetToSummary,
   } from '../lib/recorded/track-store';
-  import type { RecordedTrackSet } from '../lib/recorded/types';
-  import { keyframesFromLiveSamples, type LiveTipSample } from '../lib/recorded/auto-seed';
+  import type { RecordedTrackSet, RecordedTrackSetSummary } from '../lib/recorded/types';
+  import {
+    fetchTrackSetFromKv,
+    fetchTrackSummariesFromKv,
+    saveTrackSetToKv,
+  } from '../lib/recorded/kv-client';
+  import {
+    keyframesFromLiveSamples,
+    keyframesFromScoredSamples,
+    type LiveTipSample,
+    type LiveTipScoredSample,
+    type ScoredKeyframeOptions,
+  } from '../lib/recorded/auto-seed';
   import {
     deleteKeyframeAtFrame,
     keyframeAtFrame,
@@ -104,6 +123,27 @@ import Transport from '../components/Transport.astro';
   const recordedGenerateHint = byId<HTMLSpanElement>('recordedGenerateHint');
   const fencersDebugGroup = byId<HTMLDivElement>('fencersDebugGroup');
   const fencersDebugOverlayInput = byId<HTMLInputElement>('fencersDebugOverlay');
+  const fencersTraceResetBtn = byId<HTMLButtonElement>('fencersTraceReset');
+  const fencersTraceExportBtn = byId<HTMLButtonElement>('fencersTraceExport');
+  const fencersTraceStatus = byId<HTMLSpanElement>('fencersTraceStatus');
+  const fencerATipExtensionInput = byId<HTMLInputElement>('fencerATipExtension');
+  const fencerATipExtensionValue = byId<HTMLSpanElement>('fencerATipExtensionValue');
+  const fencerALengthSmoothingAlphaInput = byId<HTMLInputElement>('fencerALengthSmoothingAlpha');
+  const fencerALengthSmoothingAlphaValue = byId<HTMLSpanElement>('fencerALengthSmoothingAlphaValue');
+  const fencerAWristWeightInput = byId<HTMLInputElement>('fencerAWristWeight');
+  const fencerAWristWeightValue = byId<HTMLSpanElement>('fencerAWristWeightValue');
+  const fencerAWeaponArmSelect = byId<HTMLSelectElement>('fencerAWeaponArm');
+  const fencerBWeaponArmSelect = byId<HTMLSelectElement>('fencerBWeaponArm');
+  const fencerAAngleOffsetInput = byId<HTMLInputElement>('fencerAAngleOffset');
+  const fencerAAngleOffsetValue = byId<HTMLSpanElement>('fencerAAngleOffsetValue');
+  const fencerBTipExtensionInput = byId<HTMLInputElement>('fencerBTipExtension');
+  const fencerBTipExtensionValue = byId<HTMLSpanElement>('fencerBTipExtensionValue');
+  const fencerBLengthSmoothingAlphaInput = byId<HTMLInputElement>('fencerBLengthSmoothingAlpha');
+  const fencerBLengthSmoothingAlphaValue = byId<HTMLSpanElement>('fencerBLengthSmoothingAlphaValue');
+  const fencerBWristWeightInput = byId<HTMLInputElement>('fencerBWristWeight');
+  const fencerBWristWeightValue = byId<HTMLSpanElement>('fencerBWristWeightValue');
+  const fencerBAngleOffsetInput = byId<HTMLInputElement>('fencerBAngleOffset');
+  const fencerBAngleOffsetValue = byId<HTMLSpanElement>('fencerBAngleOffsetValue');
   const recordedEditToggle = byId<HTMLInputElement>('recordedEditToggle');
   const recordedEditorControls = byId<HTMLDivElement>('recordedEditorControls');
   const recordedActiveTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
@@ -111,6 +151,10 @@ import Transport from '../components/Transport.astro';
   const recordedDeleteFrameBtn = byId<HTMLButtonElement>('recordedDeleteFrame');
   const recordedClearTrackBtn = byId<HTMLButtonElement>('recordedClearTrack');
   const recordedKeyframeList = byId<HTMLDivElement>('recordedKeyframeList');
+  const savedVideosPanel = byId<HTMLDivElement>('savedVideosPanel');
+  const savedVideosRefreshBtn = byId<HTMLButtonElement>('savedVideosRefresh');
+  const savedVideosList = byId<HTMLDivElement>('savedVideosList');
+  const savedVideosStatus = byId<HTMLSpanElement>('savedVideosStatus');
   const transportPlayPauseBtn = byId<HTMLButtonElement>('transportPlayPause');
   const transportStepBackBtn = byId<HTMLButtonElement>('transportStepBack');
   const transportStepForwardBtn = byId<HTMLButtonElement>('transportStepForward');
@@ -181,6 +225,7 @@ import Transport from '../components/Transport.astro';
     },
     onAfterRender: ({ overlay: overlayCanvas, trailRenderer: overlayTrailRenderer }, frame, _timestamp) => {
       captureAutoSeedSamples(frame);
+      captureFencersTrace(frame);
 
       if (showFencersDebugOverlay && appState.get().trackingMode === 'fencers') {
         drawFencersDebugOverlay(overlayCanvas, frame);
@@ -206,9 +251,16 @@ import Transport from '../components/Transport.astro';
   const AUTO_ADVANCE_FRAME_VALUES: Array<Exclude<RecordedAutoAdvanceMode, 'next'>> = [0, 1, 2, 5, 10];
   let recordedAutoAdvanceMode: RecordedAutoAdvanceMode = 2;
   let recordedSaveTimer: number | null = null;
+  let recordedSaveSequence = 0;
   let recordedStatusNote: string | null = null;
+  let savedVideoSummaries: RecordedTrackSetSummary[] = [];
+  let savedVideosLoading = false;
+  let savedVideosRefreshSequence = 0;
   let autoSeedSamples: Record<'A' | 'B', LiveTipSample[]> = { A: [], B: [] };
+  let autoSeedScoredSamples: Record<'A' | 'B', LiveTipScoredSample[]> = { A: [], B: [] };
   let lastAutoSeedTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
+  let autoSeedCaptureMode: Exclude<TrackingMode, 'recorded'> | null = null;
+  let lastAutoSeedMediaTime: number | null = null;
   let showFencersDebugOverlay = false;
   let transportFps = DEFAULT_FRAME_RATE;
   let transportFpsApproximate = true;
@@ -217,10 +269,63 @@ import Transport from '../components/Transport.astro';
   let scrubPreviewRaf: number | null = null;
   let scrubPreviewFrame = 0;
 
+  interface FencersTraceDetection {
+    id: 'A' | 'B';
+    side: 'left' | 'right';
+    arm: 'left' | 'right' | null;
+    tipTimestamp: number;
+    tip: {
+      x: number;
+      y: number;
+      confidence: number;
+    };
+    rawExtensionLength?: number;
+    smoothedExtensionLength?: number;
+    lengthSmoothingAlpha?: number;
+    seedQuality?: number;
+    armMargin?: number | null;
+    /** Upper-body pose landmarks keyed by MediaPipe index: [x, y, visibility]. */
+    pose?: Record<number, [number, number, number]>;
+  }
+
+  // Nose, shoulders, elbows, wrists, hand points, hips: enough to re-run arm/tip heuristics offline.
+  const TRACE_POSE_LANDMARKS = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+
+  function tracePoseLandmarks(
+    landmarks: FrameData['detections'][number]['landmarks']
+  ): Record<number, [number, number, number]> | undefined {
+    if (!landmarks || landmarks.length < 25) return undefined;
+    const round = (v: number) => Math.round(v * 10000) / 10000;
+    const out: Record<number, [number, number, number]> = {};
+    for (const index of TRACE_POSE_LANDMARKS) {
+      const lm = landmarks[index];
+      if (!lm) continue;
+      out[index] = [round(lm.x), round(lm.y), round(lm.visibility ?? 0)];
+    }
+    return out;
+  }
+
+  interface FencersTraceEntry {
+    frame: number;
+    frameAt30: number;
+    frameFps: number;
+    mediaTime: number;
+    detections: FencersTraceDetection[];
+  }
+
   const RECORDED_AUTOSAVE_MS = 500;
   const RECORDED_AUTO_ADVANCE_STORAGE_KEY = 'tiptrack:v1:editor:auto-advance';
   const AUTO_SEED_BASE_HINT =
-    'Capture live hand/pose tips while playing, then generate editable recorded keyframes.';
+    'Capture live hand/pose/fencers tips while playing, then generate editable recorded keyframes.';
+  const AUTO_SEED_FILTERED_MAX_GAP_SECONDS = 0.6;
+  const AUTO_SEED_SCORED_MIN_QUALITY = 0.55;
+  const AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES = 3;
+  const FENCERS_TRACE_MAX_ENTRIES = 25000;
+
+  let fencersTraceEntries: FencersTraceEntry[] = [];
+  let fencersTraceSessionId = `${Date.now()}`;
+  let lastFencersTraceTimestampByTrack: Record<'A' | 'B', number | null> = { A: null, B: null };
+  let lastFencersTraceMediaTime: number | null = null;
 
   function parseRecordedAutoAdvanceMode(raw: string | null): RecordedAutoAdvanceMode | null {
     if (raw === 'next') return 'next';
@@ -238,6 +343,27 @@ import Transport from '../components/Transport.astro';
   recordedAutoAdvanceSelect.value = String(recordedAutoAdvanceMode);
   recordedActiveTrackSelect.value = recordedActiveTrack;
 
+  const initialState = appState.get();
+  fencerATipExtensionInput.value = initialState.fencerATipExtension.toFixed(1);
+  fencerBTipExtensionInput.value = initialState.fencerBTipExtension.toFixed(1);
+  fencerALengthSmoothingAlphaInput.value = initialState.fencerALengthSmoothingAlpha.toFixed(2);
+  fencerBLengthSmoothingAlphaInput.value = initialState.fencerBLengthSmoothingAlpha.toFixed(2);
+  fencerAWristWeightInput.value = String(Math.round(initialState.fencerAWristWeight * 100));
+  fencerBWristWeightInput.value = String(Math.round(initialState.fencerBWristWeight * 100));
+  fencerAWeaponArmSelect.value = initialState.fencerAWeaponArm;
+  fencerBWeaponArmSelect.value = initialState.fencerBWeaponArm;
+  fencerAAngleOffsetInput.value = String(initialState.fencerAAngleOffsetDeg);
+  fencerBAngleOffsetInput.value = String(initialState.fencerBAngleOffsetDeg);
+  fencerATipExtensionValue.textContent = initialState.fencerATipExtension.toFixed(1);
+  fencerBTipExtensionValue.textContent = initialState.fencerBTipExtension.toFixed(1);
+  fencerALengthSmoothingAlphaValue.textContent = initialState.fencerALengthSmoothingAlpha.toFixed(2);
+  fencerBLengthSmoothingAlphaValue.textContent = initialState.fencerBLengthSmoothingAlpha.toFixed(2);
+  fencerAWristWeightValue.textContent = String(Math.round(initialState.fencerAWristWeight * 100));
+  fencerBWristWeightValue.textContent = String(Math.round(initialState.fencerBWristWeight * 100));
+  fencerAAngleOffsetValue.textContent = String(Math.round(initialState.fencerAAngleOffsetDeg));
+  fencerBAngleOffsetValue.textContent = String(Math.round(initialState.fencerBAngleOffsetDeg));
+  updateFencersTraceStatus();
+
   // ---- Configuration side effects ----
   appState.on('trailLength', (value) => trailManager.setConfig({ maxLength: value }));
   appState.on('inferenceFps', (value) => debugRenderer.setRates(60, value));
@@ -252,7 +378,31 @@ import Transport from '../components/Transport.astro';
     updateRecordedStatus();
   });
   appState.on('poseTipExtension', (value) => setPoseTipExtension(value));
+  appState.on('fencerATipExtension', (value) => setFencerDirectionTuning('A', { extensionMultiplier: value }));
+  appState.on('fencerBTipExtension', (value) => setFencerDirectionTuning('B', { extensionMultiplier: value }));
+  appState.on('fencerALengthSmoothingAlpha', (value) => setFencerLengthSmoothingAlpha('A', 1 - value));
+  appState.on('fencerBLengthSmoothingAlpha', (value) => setFencerLengthSmoothingAlpha('B', 1 - value));
+  appState.on('fencerAWristWeight', (value) => setFencerDirectionTuning('A', { wristWeight: value }));
+  appState.on('fencerBWristWeight', (value) => setFencerDirectionTuning('B', { wristWeight: value }));
+  appState.on('fencerAAngleOffsetDeg', (value) => setFencerDirectionTuning('A', { angleOffsetDeg: value }));
+  appState.on('fencerBAngleOffsetDeg', (value) => setFencerDirectionTuning('B', { angleOffsetDeg: value }));
+  appState.on('fencerAWeaponArm', (value) => setFencerWeaponArm('A', value));
+  appState.on('fencerBWeaponArm', (value) => setFencerWeaponArm('B', value));
+  setFencerWeaponArm('A', appState.get().fencerAWeaponArm);
+  setFencerWeaponArm('B', appState.get().fencerBWeaponArm);
   setPoseTipExtension(appState.get().poseTipExtension);
+  setFencerDirectionTuning('A', {
+    extensionMultiplier: appState.get().fencerATipExtension,
+    wristWeight: appState.get().fencerAWristWeight,
+    angleOffsetDeg: appState.get().fencerAAngleOffsetDeg,
+  });
+  setFencerDirectionTuning('B', {
+    extensionMultiplier: appState.get().fencerBTipExtension,
+    wristWeight: appState.get().fencerBWristWeight,
+    angleOffsetDeg: appState.get().fencerBAngleOffsetDeg,
+  });
+  setFencerLengthSmoothingAlpha('A', 1 - appState.get().fencerALengthSmoothingAlpha);
+  setFencerLengthSmoothingAlpha('B', 1 - appState.get().fencerBLengthSmoothingAlpha);
 
   // ---- Helpers ----
   function applySourcePresentation(): void {
@@ -267,6 +417,14 @@ import Transport from '../components/Transport.astro';
     const inCameraMode = activeSource.kind === 'camera';
     for (const el of cameraOnlyElements) el.classList.toggle('hidden', !inCameraMode);
     for (const el of videoOnlyElements) el.classList.toggle('hidden', inCameraMode);
+
+    savedVideosPanel.classList.toggle('hidden', inCameraMode);
+    savedVideosRefreshBtn.disabled = inCameraMode || savedVideosLoading;
+    if (inCameraMode) {
+      savedVideosStatus.textContent = 'Switch to video source to browse saved library tracks.';
+    } else {
+      void refreshSavedVideosList({ silent: true });
+    }
 
     updateTrackingModeAvailability();
     updateRecordedPanelVisibility();
@@ -337,14 +495,61 @@ import Transport from '../components/Transport.astro';
     const show = appState.get().trackingMode === 'fencers';
     fencersDebugGroup.classList.toggle('hidden', !show);
     fencersDebugOverlayInput.disabled = !show;
+    fencersTraceResetBtn.disabled = !show;
+    fencersTraceExportBtn.disabled = !show || fencersTraceEntries.length === 0;
     if (!show) {
       fencersDebugOverlayInput.checked = false;
       showFencersDebugOverlay = false;
     }
+    updateFencersTraceStatus();
+  }
+
+  function updateFencersTraceStatus(customMessage?: string): void {
+    if (customMessage) {
+      fencersTraceStatus.textContent = customMessage;
+      fencersTraceExportBtn.disabled = appState.get().trackingMode !== 'fencers' || fencersTraceEntries.length === 0;
+      return;
+    }
+
+    if (fencersTraceEntries.length === 0) {
+      fencersTraceStatus.textContent = 'Trace: 0 entries.';
+      fencersTraceExportBtn.disabled = true;
+      return;
+    }
+
+    const last = fencersTraceEntries[fencersTraceEntries.length - 1];
+    fencersTraceStatus.textContent =
+      `Trace: ${fencersTraceEntries.length} entries (last f${last.frame} @ ${last.mediaTime.toFixed(3)}s, f30 ${last.frameAt30}).`;
+    fencersTraceExportBtn.disabled = appState.get().trackingMode !== 'fencers';
+  }
+
+  function resetFencersTrace(reason: string): void {
+    fencersTraceEntries = [];
+    fencersTraceSessionId = `${Date.now()}`;
+    lastFencersTraceTimestampByTrack = { A: null, B: null };
+    lastFencersTraceMediaTime = null;
+    updateFencersTraceStatus(`Trace: 0 entries (${reason}).`);
   }
 
   function autoSeedSampleCount(): number {
     return autoSeedSamples.A.length + autoSeedSamples.B.length;
+  }
+
+  function autoSeedScoredSampleCount(): number {
+    return autoSeedScoredSamples.A.length + autoSeedScoredSamples.B.length;
+  }
+
+  function clamp01(value: number): number {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  const AUTO_SEED_SCORED_OPTIONS: ScoredKeyframeOptions = {
+    minQuality: AUTO_SEED_SCORED_MIN_QUALITY,
+    maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
+  };
+
+  function autoSeedDetectionQuality(detection: FrameData['detections'][number]): number {
+    return clamp01(detection.tip.confidence);
   }
 
   function updateAutoSeedUi(): void {
@@ -363,12 +568,28 @@ import Transport from '../components/Transport.astro';
     }
 
     if (sampleCount === 0) {
-      recordedGenerateHint.textContent = 'Play video in Hand or Pose mode to capture draft samples.';
+      recordedGenerateHint.textContent = 'Play video in Hand, Pose, or Fencers mode to capture draft samples.';
       return;
     }
 
     const a = autoSeedSamples.A.length;
     const b = autoSeedSamples.B.length;
+    const scoredA = autoSeedScoredSamples.A.length;
+    const scoredB = autoSeedScoredSamples.B.length;
+    const scoredTotal = autoSeedScoredSampleCount();
+    const liveMode = appState.get().trackingMode;
+    const threshold = AUTO_SEED_SCORED_MIN_QUALITY;
+    const qualifiedA = autoSeedScoredSamples.A.filter((sample) => sample.quality >= threshold).length;
+    const qualifiedB = autoSeedScoredSamples.B.filter((sample) => sample.quality >= threshold).length;
+    const qualifiedTotal = qualifiedA + qualifiedB;
+
+    if (liveMode === 'fencers') {
+      recordedGenerateHint.textContent =
+        `Captured ${sampleCount} raw sample${sampleCount === 1 ? '' : 's'} (A ${a}, B ${b}); ` +
+        `${scoredTotal} scored (A ${scoredA}, B ${scoredB}), ${qualifiedTotal} above q>=${threshold.toFixed(2)} ` +
+        `(A ${qualifiedA}, B ${qualifiedB}). Generate filtered draft when ready.`;
+      return;
+    }
 
     recordedGenerateHint.textContent =
       `Captured ${sampleCount} live sample${sampleCount === 1 ? '' : 's'} (A ${a}, B ${b}). ` +
@@ -377,8 +598,155 @@ import Transport from '../components/Transport.astro';
 
   function resetAutoSeedCapture(): void {
     autoSeedSamples = { A: [], B: [] };
+    autoSeedScoredSamples = { A: [], B: [] };
     lastAutoSeedTimestampByTrack = { A: null, B: null };
+    autoSeedCaptureMode = null;
+    lastAutoSeedMediaTime = null;
     updateAutoSeedUi();
+  }
+
+  function captureFencersTrace(frame: FrameData): void {
+    if (activeSource.kind !== 'video') return;
+    if (frame.trackingMode !== 'fencers') return;
+    if (frame.detections.length === 0) return;
+
+    const mediaTime = video.currentTime;
+    if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
+
+    if (lastFencersTraceMediaTime !== null && mediaTime < lastFencersTraceMediaTime - 0.25) {
+      resetFencersTrace('seeked backward');
+    }
+
+    const detections: FencersTraceDetection[] = [];
+    for (const det of frame.detections) {
+      const id: 'A' | 'B' = det.id === 'B' ? 'B' : 'A';
+      const tipTimestamp = Number.isFinite(det.tip.timestamp) ? det.tip.timestamp : Number.NaN;
+      if (!Number.isFinite(tipTimestamp)) continue;
+      if (
+        lastFencersTraceTimestampByTrack[id] !== null &&
+        tipTimestamp <= lastFencersTraceTimestampByTrack[id]! + 1e-6
+      ) {
+        continue;
+      }
+      lastFencersTraceTimestampByTrack[id] = tipTimestamp;
+
+      detections.push({
+        id,
+        side: det.side,
+        arm: det.arm ?? null,
+        tipTimestamp,
+        tip: {
+          x: det.tip.x,
+          y: det.tip.y,
+          confidence: det.tip.confidence,
+        },
+        rawExtensionLength: det.rawExtensionLength,
+        smoothedExtensionLength: det.smoothedExtensionLength,
+        lengthSmoothingAlpha: det.lengthSmoothingAlpha,
+        seedQuality: autoSeedDetectionQuality(det),
+        armMargin: det.armMargin,
+        pose: tracePoseLandmarks(det.landmarks),
+      });
+    }
+
+    if (detections.length === 0) return;
+
+    const frameFps = transportFrameRate();
+    const entry: FencersTraceEntry = {
+      frame: frameIndex(mediaTime, frameFps),
+      frameAt30: frameIndex(mediaTime, DEFAULT_FRAME_RATE),
+      frameFps,
+      mediaTime,
+      detections,
+    };
+
+    fencersTraceEntries.push(entry);
+    if (fencersTraceEntries.length > FENCERS_TRACE_MAX_ENTRIES) {
+      fencersTraceEntries.splice(0, fencersTraceEntries.length - FENCERS_TRACE_MAX_ENTRIES);
+    }
+
+    lastFencersTraceMediaTime = mediaTime;
+    updateFencersTraceStatus();
+  }
+
+  function exportFencersTrace(): void {
+    if (fencersTraceEntries.length === 0) {
+      updateFencersTraceStatus('Trace: 0 entries. Capture a run first.');
+      return;
+    }
+
+    const draftFps = autoSeedFpsBasis();
+    const draftAKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, draftFps);
+    const draftBKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, draftFps);
+    const scoredThreshold = AUTO_SEED_SCORED_MIN_QUALITY;
+    const draftScoredAKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.A, draftFps, AUTO_SEED_SCORED_OPTIONS);
+    const draftScoredBKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.B, draftFps, AUTO_SEED_SCORED_OPTIONS);
+
+    const payload = {
+      version: 1,
+      exportedAt: Date.now(),
+      sessionId: fencersTraceSessionId,
+      source: {
+        kind: activeSource.kind,
+        videoId: currentVideoId,
+        videoUrl: currentVideoUrl,
+        width: video.videoWidth,
+        height: video.videoHeight,
+        duration: Number.isFinite(video.duration) ? video.duration : null,
+      },
+      settings: {
+        debugMode: appState.get().debugMode,
+        inferenceFps: appState.get().inferenceFps,
+        fencerATipExtension: appState.get().fencerATipExtension,
+        fencerBTipExtension: appState.get().fencerBTipExtension,
+        fencerALengthSmoothing: appState.get().fencerALengthSmoothingAlpha,
+        fencerBLengthSmoothing: appState.get().fencerBLengthSmoothingAlpha,
+        fencerAWristWeight: appState.get().fencerAWristWeight,
+        fencerBWristWeight: appState.get().fencerBWristWeight,
+        fencerAAngleOffsetDeg: appState.get().fencerAAngleOffsetDeg,
+        fencerBAngleOffsetDeg: appState.get().fencerBAngleOffsetDeg,
+        fencerAWeaponArm: appState.get().fencerAWeaponArm,
+        fencerBWeaponArm: appState.get().fencerBWeaponArm,
+      },
+      draftFromLiveSamples: {
+        fps: draftFps,
+        sampleCounts: {
+          A: autoSeedSamples.A.length,
+          B: autoSeedSamples.B.length,
+        },
+        tracks: [
+          { id: 'A', keyframes: draftAKeyframes },
+          { id: 'B', keyframes: draftBKeyframes },
+        ],
+      },
+      draftFromScoredSamples: {
+        fps: draftFps,
+        minQuality: scoredThreshold,
+        maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
+        sampleCounts: {
+          A: autoSeedScoredSamples.A.length,
+          B: autoSeedScoredSamples.B.length,
+        },
+        tracks: [
+          { id: 'A', keyframes: draftScoredAKeyframes },
+          { id: 'B', keyframes: draftScoredBKeyframes },
+        ],
+      },
+      trace: fencersTraceEntries,
+    };
+
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const idPart = (currentVideoId || 'session').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 64) || 'session';
+    anchor.href = href;
+    anchor.download = `tiptrack-fencers-trace-${idPart}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
+
+    updateFencersTraceStatus(`Trace exported: ${fencersTraceEntries.length} entries.`);
   }
 
   function updateRecordedPanelVisibility(): void {
@@ -457,24 +825,158 @@ import Transport from '../components/Transport.astro';
     return recordedTrackSet?.fps || transportFps;
   }
 
-  function loadOrCreateRecordedTrackSet(url: string): void {
+  function formatSaveClock(timestamp = Date.now()): string {
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+
+  function savedVideoTitle(summary: RecordedTrackSetSummary): string {
+    try {
+      const parsed = new URL(summary.videoUrl);
+      const segments = parsed.pathname.split('/').filter(Boolean);
+      const tail = segments[segments.length - 1];
+      if (tail && tail !== 'video.m3u8') return tail;
+      return summary.videoId;
+    } catch {
+      return summary.videoId;
+    }
+  }
+
+  function upsertSavedVideoSummary(summary: RecordedTrackSetSummary): void {
+    savedVideoSummaries = [...savedVideoSummaries.filter((item) => item.videoId !== summary.videoId), summary].sort(
+      (a, b) => b.updatedAt - a.updatedAt
+    );
+    renderSavedVideosList();
+  }
+
+  function renderSavedVideosList(): void {
+    if (savedVideosLoading) {
+      savedVideosList.innerHTML = '<div class="hint">Loading library...</div>';
+      return;
+    }
+
+    if (savedVideoSummaries.length === 0) {
+      savedVideosList.innerHTML = '<div class="hint">No saved videos in library yet.</div>';
+      return;
+    }
+
+    savedVideosList.innerHTML = '';
+    for (const summary of savedVideoSummaries) {
+      const row = document.createElement('div');
+      row.className = 'saved-video-row';
+
+      const main = document.createElement('div');
+      main.className = 'saved-video-main';
+
+      const title = document.createElement('span');
+      title.className = 'saved-video-title';
+      title.textContent = savedVideoTitle(summary);
+
+      const meta = document.createElement('span');
+      meta.className = 'saved-video-meta';
+      const updated = formatSaveClock(summary.updatedAt);
+      const keyframes = `${summary.keyframeCount} keyframe${summary.keyframeCount === 1 ? '' : 's'}`;
+      meta.textContent = `${keyframes} · ${updated}`;
+
+      main.appendChild(title);
+      main.appendChild(meta);
+
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'saved-video-load';
+      loadBtn.textContent = 'Load';
+      loadBtn.dataset.videoId = summary.videoId;
+      loadBtn.dataset.videoUrl = summary.videoUrl;
+      if (currentVideoId === summary.videoId) {
+        loadBtn.classList.add('active');
+      }
+
+      row.appendChild(main);
+      row.appendChild(loadBtn);
+      savedVideosList.appendChild(row);
+    }
+  }
+
+  async function refreshSavedVideosList(options: { silent?: boolean } = {}): Promise<void> {
+    if (activeSource.kind !== 'video') return;
+
+    const sequence = ++savedVideosRefreshSequence;
+    savedVideosLoading = true;
+    savedVideosRefreshBtn.disabled = true;
+    if (!options.silent) {
+      savedVideosStatus.textContent = 'Loading saved video library...';
+    }
+    renderSavedVideosList();
+
+    try {
+      const summaries = await fetchTrackSummariesFromKv();
+      if (sequence !== savedVideosRefreshSequence) return;
+      savedVideoSummaries = summaries;
+      const count = summaries.length;
+      savedVideosStatus.textContent =
+        count === 0
+          ? 'No saved videos in library yet.'
+          : `${count} saved video${count === 1 ? '' : 's'} in library.`;
+    } catch (error) {
+      if (sequence !== savedVideosRefreshSequence) return;
+      console.warn('Failed to load saved videos list:', error);
+      savedVideosStatus.textContent = 'Library unavailable right now.';
+    } finally {
+      if (sequence !== savedVideosRefreshSequence) return;
+      savedVideosLoading = false;
+      savedVideosRefreshBtn.disabled = false;
+      renderSavedVideosList();
+    }
+  }
+
+  async function loadOrCreateRecordedTrackSet(url: string): Promise<void> {
     const videoId = deriveVideoId(url);
     currentVideoId = videoId;
     currentVideoUrl = url;
     resetAutoSeedCapture();
+    resetFencersTrace('video loaded');
 
-    const loaded = loadTrackSet(videoId, url, transportFps);
-    if (loaded) {
-      loaded.videoId = videoId;
-      loaded.videoUrl = url;
-      recordedTrackSet = loaded;
-      saveTrackSet(recordedTrackSet);
-    } else {
-      recordedTrackSet = createEmptyTrackSet(videoId, url, transportFps, 1.0);
-      saveTrackSet(recordedTrackSet);
+    const local = loadTrackSet(videoId, url, transportFps);
+    let remote: RecordedTrackSet | null = null;
+    let remoteUnavailable = false;
+    try {
+      remote = await fetchTrackSetFromKv(videoId);
+    } catch (error) {
+      remoteUnavailable = true;
+      console.warn('Failed to load track set from KV, falling back to local store:', error);
     }
 
-    recordedStatusNote = null;
+    if (remote) {
+      upsertSavedVideoSummary(trackSetToSummary(remote));
+    }
+
+    const chosen =
+      remote && local
+        ? remote.updatedAt >= local.updatedAt
+          ? remote
+          : local
+        : remote ?? local ?? createEmptyTrackSet(videoId, url, transportFps, 1.0);
+
+    chosen.videoId = videoId;
+    chosen.videoUrl = url;
+    recordedTrackSet = chosen;
+    saveTrackSet(recordedTrackSet, { touchUpdatedAt: false });
+
+    if (remote && local) {
+      recordedStatusNote = remote.updatedAt >= local.updatedAt
+        ? 'Loaded from library.'
+        : 'Loaded local copy (newer than library).';
+    } else if (remote) {
+      recordedStatusNote = 'Loaded from library.';
+    } else if (local && remoteUnavailable) {
+      recordedStatusNote = 'Loaded local copy (library unavailable).';
+    } else {
+      recordedStatusNote = null;
+    }
+
     recordedActiveTrack = 'A';
     recordedActiveTrackSelect.value = 'A';
     renderRecordedKeyframeList();
@@ -483,32 +985,50 @@ import Transport from '../components/Transport.astro';
     updateRecordedStatus();
   }
 
-  function persistRecordedTrackSet(): void {
+  async function flushRecordedAutosave(sequence: number): Promise<void> {
     if (!recordedTrackSet) return;
-    saveTrackSet(recordedTrackSet);
+
+    const snapshot = JSON.parse(JSON.stringify(recordedTrackSet)) as RecordedTrackSet;
+    const snapshotVideoId = snapshot.videoId;
+    saveTrackSet(snapshot);
+
+    try {
+      const saved = await saveTrackSetToKv(snapshot);
+      if (sequence !== recordedSaveSequence) return;
+      if (!recordedTrackSet || saved.videoId !== recordedTrackSet.videoId) return;
+
+      recordedTrackSet = saved;
+      saveTrackSet(saved, { touchUpdatedAt: false });
+      upsertSavedVideoSummary(trackSetToSummary(saved));
+      recordedStatusNote = `Saved ${formatSaveClock(saved.updatedAt)}`;
+    } catch (error) {
+      if (sequence !== recordedSaveSequence) return;
+      if (!recordedTrackSet || recordedTrackSet.videoId !== snapshotVideoId) return;
+      console.warn('Failed to save track set to KV:', error);
+      recordedStatusNote = 'Saved locally (offline).';
+    }
+
+    if (sequence === recordedSaveSequence && recordedTrackSet && recordedTrackSet.videoId === snapshotVideoId) {
+      updateRecordedStatus();
+    }
   }
 
-  function scheduleRecordedAutosave(): void {
+  function scheduleRecordedAutosave(delayMs = RECORDED_AUTOSAVE_MS): void {
     if (!recordedTrackSet) return;
 
     recordedStatusNote = 'Unsaved changes...';
     updateRecordedStatus();
+
+    const sequence = ++recordedSaveSequence;
 
     if (recordedSaveTimer !== null) {
       window.clearTimeout(recordedSaveTimer);
     }
 
     recordedSaveTimer = window.setTimeout(() => {
-      persistRecordedTrackSet();
-      const stamp = new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
-      recordedStatusNote = `Saved ${stamp}`;
-      updateRecordedStatus();
       recordedSaveTimer = null;
-    }, RECORDED_AUTOSAVE_MS);
+      void flushRecordedAutosave(sequence);
+    }, delayMs);
   }
 
   function captureAutoSeedSamples(frame: FrameData): void {
@@ -517,8 +1037,19 @@ import Transport from '../components/Transport.astro';
     if (!activeSource.isPlaying()) return;
     if (frame.detections.length === 0) return;
 
+    const liveMode = frame.trackingMode;
+    if (autoSeedCaptureMode && autoSeedCaptureMode !== liveMode) {
+      resetAutoSeedCapture();
+    }
+    autoSeedCaptureMode = liveMode;
+
     const mediaTime = video.currentTime;
     if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
+
+    if (lastAutoSeedMediaTime !== null && mediaTime < lastAutoSeedMediaTime - 0.25) {
+      resetAutoSeedCapture();
+      autoSeedCaptureMode = liveMode;
+    }
 
     let capturedAny = false;
 
@@ -536,10 +1067,17 @@ import Transport from '../components/Transport.astro';
         x: det.tip.x,
         y: det.tip.y,
       });
+      autoSeedScoredSamples[id].push({
+        time: mediaTime,
+        x: det.tip.x,
+        y: det.tip.y,
+        quality: autoSeedDetectionQuality(det),
+      });
       capturedAny = true;
     }
 
     if (capturedAny) {
+      lastAutoSeedMediaTime = mediaTime;
       updateAutoSeedUi();
     }
   }
@@ -547,7 +1085,7 @@ import Transport from '../components/Transport.astro';
   function generateRecordedDraftFromLive(): void {
     if (activeSource.kind !== 'video') return;
     if (appState.get().trackingMode === 'recorded') {
-      detectionStatus.textContent = 'Switch to Hand or Pose mode to capture a new draft.';
+      detectionStatus.textContent = 'Switch to Hand, Pose, or Fencers mode to capture a new draft.';
       return;
     }
     if (!currentVideoId || !currentVideoUrl) {
@@ -567,19 +1105,34 @@ import Transport from '../components/Transport.astro';
             x: det.tip.x,
             y: det.tip.y,
           });
+          autoSeedScoredSamples[id].push({
+            time: mediaTime,
+            x: det.tip.x,
+            y: det.tip.y,
+            quality: autoSeedDetectionQuality(det),
+          });
         }
         totalSamples = autoSeedSampleCount();
       }
     }
 
     if (totalSamples === 0) {
-      detectionStatus.textContent = 'No live samples captured yet. Play in Hand or Pose mode first.';
+      detectionStatus.textContent = 'No live samples captured yet. Play in Hand, Pose, or Fencers mode first.';
       return;
     }
 
+    const liveMode = appState.get().trackingMode as Exclude<TrackingMode, 'recorded'>;
     const fps = autoSeedFpsBasis();
-    const aKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, fps);
-    const bKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, fps);
+    const rawAKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, fps);
+    const rawBKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, fps);
+    const scoredOptions = AUTO_SEED_SCORED_OPTIONS;
+    const scoredThreshold = AUTO_SEED_SCORED_MIN_QUALITY;
+    const scoredAKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.A, fps, scoredOptions);
+    const scoredBKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.B, fps, scoredOptions);
+    const useFilteredDraft = liveMode === 'fencers' && autoSeedScoredSampleCount() > 0;
+    const aKeyframes = useFilteredDraft ? scoredAKeyframes : rawAKeyframes;
+    const bKeyframes = useFilteredDraft ? scoredBKeyframes : rawBKeyframes;
+    const draftLabel = useFilteredDraft ? 'filtered' : 'raw';
 
     if (aKeyframes.length === 0 && bKeyframes.length === 0) {
       detectionStatus.textContent = 'Captured samples were not usable as keyframes.';
@@ -596,11 +1149,13 @@ import Transport from '../components/Transport.astro';
     }
 
     const base = recordedTrackSet ?? createEmptyTrackSet(currentVideoId, currentVideoUrl, fps, 1.0);
+    const nextMaxGapSeconds = useFilteredDraft ? AUTO_SEED_FILTERED_MAX_GAP_SECONDS : base.maxGapSeconds;
     recordedTrackSet = {
       ...base,
       videoId: currentVideoId,
       videoUrl: currentVideoUrl,
       fps,
+      maxGapSeconds: nextMaxGapSeconds,
       tracks: base.tracks.map((track) => {
         if (track.id === 'A') return { ...track, keyframes: aKeyframes };
         if (track.id === 'B') return { ...track, keyframes: bKeyframes };
@@ -608,12 +1163,14 @@ import Transport from '../components/Transport.astro';
       }),
     };
 
-    recordedStatusNote = `Auto-seeded draft: A ${aKeyframes.length}, B ${bKeyframes.length}.`;
+    recordedStatusNote =
+      `Auto-seeded ${draftLabel} draft: A ${aKeyframes.length}, B ${bKeyframes.length}. ` +
+      `(raw A ${rawAKeyframes.length}, B ${rawBKeyframes.length})`;
     recordedEditMode = false;
     recordedEditToggle.checked = false;
     updateRecordedEditorControlsVisibility();
     updateEditOverlayInteractivity();
-    persistRecordedTrackSet();
+    scheduleRecordedAutosave(0);
     renderRecordedKeyframeList();
     updateRecordedStatus();
     trailManager.clear();
@@ -632,8 +1189,11 @@ import Transport from '../components/Transport.astro';
     const sampledDuration =
       Number.isFinite(minTime) && Number.isFinite(maxTime) ? Math.max(0, maxTime - minTime) : 0;
     detectionStatus.textContent =
-      `Generated draft: A ${aKeyframes.length}, B ${bKeyframes.length} keyframes` +
-      ` (${sampledDuration.toFixed(1)}s @ ${fps.toFixed(2)}fps)`;
+      `Generated ${draftLabel} draft: A ${aKeyframes.length}, B ${bKeyframes.length} keyframes` +
+      ` (${sampledDuration.toFixed(1)}s @ ${fps.toFixed(2)}fps` +
+      `${useFilteredDraft ? `, base q>=${scoredThreshold.toFixed(2)}` : ''})`;
+
+    resetAutoSeedCapture();
   }
 
   function formatClock(seconds: number): string {
@@ -669,7 +1229,12 @@ import Transport from '../components/Transport.astro';
       ? seekTimeForFrame(seekDragFrame, uiFps, duration)
       : video.currentTime;
 
-    transportReadout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  f${displayedFrame}`;
+    const canonicalFrame = frameIndex(displayedTime, DEFAULT_FRAME_RATE);
+    const frameReadout =
+      Math.abs(uiFps - DEFAULT_FRAME_RATE) < 0.01
+        ? `f${displayedFrame}`
+        : `f${displayedFrame}@${uiFps.toFixed(2)} / f30 ${canonicalFrame}`;
+    transportReadout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  ${frameReadout}`;
 
     transportPlayPauseBtn.textContent = video.paused || video.ended ? 'Play' : 'Pause';
 
@@ -942,16 +1507,77 @@ import Transport from '../components/Transport.astro';
     const ctx = overlayCanvas.getContext('2d');
     if (!ctx) return;
 
+    const lengthDiagnostics = new Map<'A' | 'B', { raw: number; smooth: number; delta: number }>();
     for (const detection of frame.detections) {
-      if (!detection.refinement) continue;
+      const raw = detection.rawExtensionLength;
+      const smooth = detection.smoothedExtensionLength;
+      if (typeof raw !== 'number' || typeof smooth !== 'number') continue;
+      if (!Number.isFinite(raw) || !Number.isFinite(smooth)) continue;
+      const id: 'A' | 'B' = detection.id === 'B' ? 'B' : 'A';
+      lengthDiagnostics.set(id, { raw, smooth, delta: Math.abs(raw - smooth) });
+    }
 
+    if (frame.debugMode === 'skeleton' || frame.debugMode === 'all') {
+      const state = appState.get();
+      const aExt = state.fencerATipExtension.toFixed(1);
+      const bExt = state.fencerBTipExtension.toFixed(1);
+      const aSmooth = state.fencerALengthSmoothingAlpha.toFixed(2);
+      const bSmooth = state.fencerBLengthSmoothingAlpha.toFixed(2);
+      const aAlpha = (1 - state.fencerALengthSmoothingAlpha).toFixed(2);
+      const bAlpha = (1 - state.fencerBLengthSmoothingAlpha).toFixed(2);
+      const aWrist = Math.round(state.fencerAWristWeight * 100);
+      const bWrist = Math.round(state.fencerBWristWeight * 100);
+      const aAngle = Math.round(state.fencerAAngleOffsetDeg);
+      const bAngle = Math.round(state.fencerBAngleOffsetDeg);
+      const aDiag = lengthDiagnostics.get('A');
+      const bDiag = lengthDiagnostics.get('B');
+      const aLen = aDiag
+        ? `L${aDiag.raw.toFixed(3)}->${aDiag.smooth.toFixed(3)} d${aDiag.delta.toFixed(3)}`
+        : 'L--';
+      const bLen = bDiag
+        ? `L${bDiag.raw.toFixed(3)}->${bDiag.smooth.toFixed(3)} d${bDiag.delta.toFixed(3)}`
+        : 'L--';
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(10, 10, 560, 54);
+      ctx.fillStyle = '#f4f4f4';
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Blade lines: F=Forearm W=Wrist B=Blend+Angle', 16, 21);
+      ctx.fillText(
+        `A E${aExt}x S${aSmooth}/a${aAlpha} W${aWrist}% A${aAngle}deg | B E${bExt}x S${bSmooth}/a${bAlpha} W${bWrist}% A${bAngle}deg`,
+        16,
+        36
+      );
+      ctx.fillText(`A ${aLen} | B ${bLen}`, 16, 50);
+      ctx.restore();
+    }
+
+    for (const detection of frame.detections) {
       const color = detection.id === 'B' ? '#ff4d5a' : '#36d67a';
-      const prior = mapToCanvas(detection.refinement.prior.x, detection.refinement.prior.y);
-      const refined = mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y);
-      const start = mapToCanvas(detection.refinement.searchStart.x, detection.refinement.searchStart.y);
-      const end = mapToCanvas(detection.refinement.searchEnd.x, detection.refinement.searchEnd.y);
-      const confidence = Math.round(detection.refinement.confidence * 100);
-      const label = `${detection.id} ${confidence}%`;
+      const confidence = Math.round(detection.tip.confidence * 100);
+      const confidenceLabel = `${confidence}%`;
+      const armSide = detection.arm;
+      const arm = armSide ? armSide[0].toUpperCase() : '?';
+      const armMarginLabel =
+        typeof detection.armMargin === 'number' ? ` m${detection.armMargin.toFixed(3)}` : '';
+      const rawLen = detection.rawExtensionLength;
+      const smoothLen = detection.smoothedExtensionLength;
+      const delta =
+        typeof rawLen === 'number' &&
+        typeof smoothLen === 'number' &&
+        Number.isFinite(rawLen) &&
+        Number.isFinite(smoothLen)
+          ? Math.abs(rawLen - smoothLen)
+          : null;
+      const lenLabel =
+        delta !== null && typeof rawLen === 'number' && typeof smoothLen === 'number'
+          ? ` L${rawLen.toFixed(3)}->${smoothLen.toFixed(3)} d${delta.toFixed(3)}`
+          : '';
+      const label =
+        `${detection.id} ${arm}${armMarginLabel} ${confidenceLabel}${lenLabel}`;
+      const labelAnchor = mapToCanvas(detection.tip.x, detection.tip.y);
 
       ctx.save();
       ctx.strokeStyle = color;
@@ -959,26 +1585,11 @@ import Transport from '../components/Transport.astro';
       ctx.lineWidth = 1.5;
       ctx.globalAlpha = 0.95;
 
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(end.x, end.y);
-      ctx.stroke();
-
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.arc(prior.x, prior.y, 4, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(refined.x, refined.y, 3, 0, Math.PI * 2);
-      ctx.fill();
-
       ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(label, refined.x + 7, refined.y - 8);
+      ctx.fillText(label, labelAnchor.x + 7, labelAnchor.y - 8);
       ctx.restore();
     }
   }
@@ -1163,7 +1774,8 @@ import Transport from '../components/Transport.astro';
       await urlSource.attach(video);
       setVideoQueryParam(url);
       await detectTransportFps(url);
-      loadOrCreateRecordedTrackSet(url);
+      await loadOrCreateRecordedTrackSet(url);
+      void refreshSavedVideosList({ silent: true });
       updatePlaybackStatus();
       if (appState.get().trackingMode === 'recorded') {
         detectionStatus.textContent = video.paused ? 'Recorded mode - tap Play' : 'Recorded mode';
@@ -1178,6 +1790,18 @@ import Transport from '../components/Transport.astro';
       detectionStatus.textContent =
         err instanceof UnsupportedVideoSourceError ? err.message : 'Failed to load video URL';
       updatePlaybackStatus();
+    }
+  }
+
+  async function loadVideoFromLibrary(url: string): Promise<void> {
+    if (!url) return;
+    videoUrlInput.value = url;
+    savedVideosStatus.textContent = 'Loading selected library video...';
+    await loadVideoFromInput();
+
+    if (activeSource.kind === 'video' && currentVideoUrl === url) {
+      appState.update({ trackingMode: 'recorded' });
+      savedVideosStatus.textContent = 'Loaded from saved library entry.';
     }
   }
 
@@ -1210,6 +1834,7 @@ import Transport from '../components/Transport.astro';
         currentVideoId = null;
         currentVideoUrl = '';
         resetAutoSeedCapture();
+        resetFencersTrace('switched to camera');
         recordedTrackSet = null;
         recordedStatusNote = null;
         recordedEditMode = false;
@@ -1224,6 +1849,7 @@ import Transport from '../components/Transport.astro';
         currentVideoId = null;
         currentVideoUrl = '';
         resetAutoSeedCapture();
+        resetFencersTrace('switched to video mode');
         recordedTrackSet = null;
         recordedStatusNote = null;
         recordedEditMode = false;
@@ -1266,6 +1892,20 @@ import Transport from '../components/Transport.astro';
     void loadVideoFromInput();
   });
 
+  savedVideosRefreshBtn.addEventListener('click', () => {
+    void refreshSavedVideosList();
+  });
+
+  savedVideosList.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement)) return;
+    if (!target.classList.contains('saved-video-load')) return;
+
+    const url = target.dataset.videoUrl?.trim() ?? '';
+    if (!url) return;
+    void loadVideoFromLibrary(url);
+  });
+
   recordedGenerateDraftBtn.addEventListener('click', () => {
     generateRecordedDraftFromLive();
   });
@@ -1300,7 +1940,7 @@ import Transport from '../components/Transport.astro';
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     recordedStatusNote = null;
-    persistRecordedTrackSet();
+    scheduleRecordedAutosave(0);
     renderRecordedKeyframeList();
     trailManager.clear();
     mainLoop.clearDetections();
@@ -1330,7 +1970,7 @@ import Transport from '../components/Transport.astro';
     imported.fps = imported.fps || transportFps;
     recordedTrackSet = imported;
     recordedStatusNote = null;
-    persistRecordedTrackSet();
+    scheduleRecordedAutosave(0);
     renderRecordedKeyframeList();
     trailManager.clear();
     mainLoop.clearDetections();
@@ -1430,6 +2070,14 @@ import Transport from '../components/Transport.astro';
     showFencersDebugOverlay = fencersDebugOverlayInput.checked;
   });
 
+  fencersTraceResetBtn.addEventListener('click', () => {
+    resetFencersTrace('manual reset');
+  });
+
+  fencersTraceExportBtn.addEventListener('click', () => {
+    exportFencersTrace();
+  });
+
   debugModeSelect.addEventListener('change', (e) => {
     appState.update({ debugMode: (e.target as HTMLSelectElement).value as DebugMode });
   });
@@ -1456,6 +2104,62 @@ import Transport from '../components/Transport.astro';
     const value = parseFloat((e.target as HTMLInputElement).value);
     poseTipExtensionValue.textContent = value.toFixed(1);
     appState.update({ poseTipExtension: value });
+  });
+
+  fencerATipExtensionInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerATipExtensionValue.textContent = value.toFixed(1);
+    appState.update({ fencerATipExtension: value });
+  });
+
+  fencerBTipExtensionInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerBTipExtensionValue.textContent = value.toFixed(1);
+    appState.update({ fencerBTipExtension: value });
+  });
+
+  fencerALengthSmoothingAlphaInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerALengthSmoothingAlphaValue.textContent = value.toFixed(2);
+    appState.update({ fencerALengthSmoothingAlpha: value });
+  });
+
+  fencerBLengthSmoothingAlphaInput.addEventListener('input', (e) => {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    fencerBLengthSmoothingAlphaValue.textContent = value.toFixed(2);
+    appState.update({ fencerBLengthSmoothingAlpha: value });
+  });
+
+  fencerAWristWeightInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerAWristWeightValue.textContent = String(value);
+    appState.update({ fencerAWristWeight: value / 100 });
+  });
+
+  fencerBWristWeightInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerBWristWeightValue.textContent = String(value);
+    appState.update({ fencerBWristWeight: value / 100 });
+  });
+
+  fencerAAngleOffsetInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerAAngleOffsetValue.textContent = String(value);
+    appState.update({ fencerAAngleOffsetDeg: value });
+  });
+
+  fencerBAngleOffsetInput.addEventListener('input', (e) => {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    fencerBAngleOffsetValue.textContent = String(value);
+    appState.update({ fencerBAngleOffsetDeg: value });
+  });
+
+  fencerAWeaponArmSelect.addEventListener('change', () => {
+    appState.update({ fencerAWeaponArm: fencerAWeaponArmSelect.value as WeaponArmMode });
+  });
+
+  fencerBWeaponArmSelect.addEventListener('change', () => {
+    appState.update({ fencerBWeaponArm: fencerBWeaponArmSelect.value as WeaponArmMode });
   });
 
   effectModeSelect.addEventListener('change', (e) => {
@@ -1537,7 +2241,7 @@ import Transport from '../components/Transport.astro';
     setTransportFps(parsed, false);
     if (recordedTrackSet) {
       recordedTrackSet.fps = parsed;
-      persistRecordedTrackSet();
+      scheduleRecordedAutosave(0);
     }
   });
 

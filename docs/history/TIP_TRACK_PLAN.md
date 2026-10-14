@@ -1,5 +1,7 @@
 # Tip Track - Implementation Plan
 
+> Historical: original architecture notes from the first prototype. See `../../STATUS.md` for current status.
+
 ## Project Overview
 
 A browser-based proof-of-concept for real-time fencing bout tracking with neon trail visualization. Uses MediaPipe Pose for body landmark detection and estimates sword tip positions via forearm vector extension.
