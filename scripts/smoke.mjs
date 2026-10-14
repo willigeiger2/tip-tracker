@@ -234,15 +234,84 @@ async function main() {
 
     await step('generate recorded draft', async () => {
       await ensureMenuOpen();
-      page.once('dialog', (dialog) => dialog.accept());
+      const keyframeTotal = async () =>
+        Number(/^(\d+) keyframe/.exec(await page.locator('#recordedStatus').innerText())?.[1] ?? 0);
+      const before = await keyframeTotal();
+      let dialogText = null;
+      const onDialog = (dialog) => {
+        dialogText = dialog.message();
+        void dialog.accept();
+      };
+      page.once('dialog', onDialog);
       await page.click('#recordedGenerateDraft');
       await page.waitForTimeout(500);
+      page.off('dialog', onDialog);
       const mode = await page.locator('#trackingMode').inputValue();
       if (mode !== 'recorded') throw new Error(`tracking mode is "${mode}" after draft`);
-      const recorded = await page.locator('#recordedStatus').innerText();
-      const count = Number(/^(\d+) keyframe/.exec(recorded)?.[1] ?? 0);
-      if (count < 10) throw new Error(`draft too small: "${recorded}"`);
-      return recorded;
+      const after = await keyframeTotal();
+      if (dialogText === null) {
+        // Nothing existed in the captured range: the draft is purely added.
+        if (after <= before) throw new Error(`draft added nothing: before ${before}, after ${after}`);
+        return `before ${before}, after ${after} (no overlap)`;
+      }
+      const replaced = Number(/Replace (\d+) existing/.exec(dialogText)?.[1] ?? NaN);
+      const draft = /draft \(A (\d+), B (\d+)\)/.exec(dialogText);
+      if (!draft) throw new Error(`unexpected dialog: ${dialogText}`);
+      const added = Number(draft[1]) + Number(draft[2]);
+      if (added < 1) throw new Error(`empty draft: ${dialogText}`);
+      // Range-scoped merge: keyframes outside the captured range must survive.
+      if (after !== before - replaced + added) {
+        throw new Error(`merge mismatch: before ${before}, replaced ${replaced}, added ${added}, after ${after}`);
+      }
+      return `before ${before}, replaced ${replaced}, added ${added}, after ${after}`;
+    });
+
+    await step('re-draft over existing keyframes replaces only the captured range', async () => {
+      await ensureMenuOpen();
+      const keyframeTotal = async () =>
+        Number(/^(\d+) keyframe/.exec(await page.locator('#recordedStatus').innerText())?.[1] ?? 0);
+      const before = await keyframeTotal();
+      await page.selectOption('#trackingMode', 'fencers');
+      await page.evaluate(() => {
+        const v = document.querySelector('video');
+        v.pause();
+        v.currentTime = 10;
+      });
+      await page.waitForTimeout(500);
+      await page.evaluate(() => document.querySelector('video').play());
+      try {
+        await page.waitForFunction(
+          () =>
+            document.querySelector('video').currentTime >= 11.5 &&
+            Number(/Captured (\d+)/.exec(document.querySelector('#recordedGenerateHint')?.textContent ?? '')?.[1] ?? 0) >= 20,
+          null,
+          { timeout: 30000 }
+        );
+      } catch {
+        const t = await page.evaluate(() => document.querySelector('video').currentTime.toFixed(2));
+        throw new Error(`video did not play 10s -> 11.5s with samples (stalled at ${t}s?)`);
+      }
+      await page.evaluate(() => document.querySelector('video').pause());
+      await ensureMenuOpen();
+      let dialogText = null;
+      const onDialog = (dialog) => {
+        dialogText = dialog.message();
+        void dialog.accept();
+      };
+      page.once('dialog', onDialog);
+      await page.click('#recordedGenerateDraft');
+      await page.waitForTimeout(500);
+      page.off('dialog', onDialog);
+      if (dialogText === null) throw new Error('expected a replace confirmation for an overlapping draft');
+      const replaced = Number(/Replace (\d+) existing/.exec(dialogText)?.[1] ?? NaN);
+      const draft = /draft \(A (\d+), B (\d+)\)/.exec(dialogText);
+      if (!draft || !(replaced > 0)) throw new Error(`unexpected dialog: ${dialogText}`);
+      const added = Number(draft[1]) + Number(draft[2]);
+      const after = await keyframeTotal();
+      if (after !== before - replaced + added) {
+        throw new Error(`merge mismatch: before ${before}, replaced ${replaced}, added ${added}, after ${after}`);
+      }
+      return `${dialogText.split('\n')[0].slice(0, 90)} -> ${before} - ${replaced} + ${added} = ${after}`;
     });
 
     await step('recorded mode panel', async () => {

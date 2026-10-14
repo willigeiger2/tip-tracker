@@ -185,3 +185,48 @@ export function keyframesFromScoredSamples(
 
   return keyframes.sort((a, b) => a.time - b.time);
 }
+
+export interface TimeRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Group capture times into contiguous ranges, splitting wherever consecutive times are more
+ * than `maxGapSeconds` apart (e.g. the user skipped forward between plays).
+ */
+export function captureRanges(times: readonly number[], maxGapSeconds: number): TimeRange[] {
+  const sorted = times.filter((t) => Number.isFinite(t)).sort((a, b) => a - b);
+  const ranges: TimeRange[] = [];
+  for (const t of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && t - last.end <= maxGapSeconds) {
+      last.end = t;
+    } else {
+      ranges.push({ start: t, end: t });
+    }
+  }
+  return ranges;
+}
+
+/** True when `time` lies inside any range widened by `padSeconds` on both sides. */
+export function inRanges(time: number, ranges: readonly TimeRange[], padSeconds = 0): boolean {
+  return ranges.some((r) => time >= r.start - padSeconds && time <= r.end + padSeconds);
+}
+
+/**
+ * Merge a draft into an existing track: existing keyframes inside the captured ranges are
+ * replaced by the draft; existing keyframes outside them are kept untouched.
+ */
+export function mergeDraftKeyframes(
+  existing: readonly Keyframe[],
+  draft: readonly Keyframe[],
+  ranges: readonly TimeRange[],
+  padSeconds = 0
+): { keyframes: Keyframe[]; replaced: number } {
+  const kept = existing.filter((kf) => !inRanges(kf.time, ranges, padSeconds));
+  return {
+    keyframes: [...kept, ...draft].sort((a, b) => a.time - b.time),
+    replaced: existing.length - kept.length,
+  };
+}
