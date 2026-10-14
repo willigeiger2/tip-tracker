@@ -16,6 +16,8 @@
 		"check": "astro check",
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"trace:auto": "node scripts/run_fencers_trace_automation.mjs",
+		"trace:auto:install-browser": "playwright install chromium",
 		"generate-types": "wrangler types",
 		"deploy": "astro build && wrangler deploy",
 		"cf-typegen": "wrangler types"
@@ -27,6 +29,7 @@
 	},
 	"devDependencies": {
 		"@astrojs/check": "^0.9.10",
+		"playwright": "^1.55.1",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.11",
 		"wrangler": "^4.139.0"

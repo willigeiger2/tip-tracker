@@ -24,6 +24,31 @@ sword tip. Open the hamburger menu (top right) for controls.
 | `npm run build` | Production build to `dist/` |
 | `npm run deploy` | Build and `wrangler deploy` |
 | `npm run cf-typegen` | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` |
+| `npm run trace:auto` | Headless Chromium run of fencers tracking on a video URL; writes trace JSON and can run evaluator |
+| `npm run trace:auto:install-browser` | Install Chromium for Playwright automation |
+
+## Automated Trace Runner
+
+Use the built-in Playwright runner to execute the same in-browser fencers pipeline without manual UI clicks.
+
+```sh
+npm run trace:auto:install-browser
+
+npm run trace:auto -- \
+  --video-url "https://.../manifest/video.m3u8" \
+  --truth-json "/Users/me/Downloads/tiptrack-short-clip-hand-edited.json" \
+  --frame-start 450 \
+  --frame-end 760 \
+  --adaptive-enabled true \
+  --fencer-a-tip-extension 4.4 \
+  --fencer-b-tip-extension 4.4
+```
+
+Notes:
+
+- The runner starts `npm run dev` automatically (use `--no-start-server` to reuse an existing app server).
+- Output defaults to `trace-output/tiptrack-fencers-trace-auto-<timestamp>.json`.
+- It uses the app's `window.tipTrackAutomation` API, so results come from the same runtime code path as manual browser runs.
 
 ## Modes
 

@@ -38,7 +38,7 @@ import Transport from '../components/Transport.astro';
     seekTimeForFrame,
   } from '../lib/app/frame-rate';
   import { createCoordinateMapper, createInverseCoordinateMapper } from '../lib/app/coordinate-mapper';
-  import { createAppState } from '../lib/app/state';
+  import { createAppState, type AppState } from '../lib/app/state';
   import type { FrameData, RenderContext } from '../lib/app/render-modes';
   import { MainLoop } from '../lib/app/main-loop';
   import { installOverlaySizing } from '../lib/app/overlay-sizing';
@@ -86,9 +86,47 @@ import Transport from '../components/Transport.astro';
     return el as unknown as T;
   }
 
+  interface FencersAutomationRunConfig {
+    videoUrl: string;
+    startTimeSec?: number;
+    endTimeSec?: number;
+    settleMs?: number;
+    timeoutMs?: number;
+    inferenceFps?: number;
+    refinementEnabled?: boolean;
+    adaptiveTuningEnabled?: boolean;
+    fencerATipExtension?: number;
+    fencerBTipExtension?: number;
+    fencerALengthSmoothingAlpha?: number;
+    fencerBLengthSmoothingAlpha?: number;
+    fencerAWristWeight?: number;
+    fencerBWristWeight?: number;
+    fencerAAngleOffsetDeg?: number;
+    fencerBAngleOffsetDeg?: number;
+  }
+
+  interface TipTrackAutomationApi {
+    isInitialized(): boolean;
+    resetFencersTrace(reason?: string): void;
+    buildFencersTracePayload(): FencersTracePayload | null;
+    runFencersTraceCapture(config: FencersAutomationRunConfig): Promise<FencersAutomationRunResult>;
+    getStatus(): {
+      sourceMode: SourceKind;
+      trackingMode: TrackingMode;
+      detectorReady: boolean;
+      detectorSwitching: boolean;
+      traceEntries: number;
+      adaptiveEnabled: boolean;
+      videoTime: number;
+      videoDuration: number;
+      videoPaused: boolean;
+    };
+  }
+
   const tipTrackDebugWindow = window as Window & {
     setFencerAdaptiveTuningEnabled?: (enabled: boolean) => void;
     isFencerAdaptiveTuningEnabled?: () => boolean;
+    tipTrackAutomation?: TipTrackAutomationApi;
   };
   tipTrackDebugWindow.setFencerAdaptiveTuningEnabled = setFencerAdaptiveTuningEnabled;
   tipTrackDebugWindow.isFencerAdaptiveTuningEnabled = isFencerAdaptiveTuningEnabled;
@@ -297,12 +335,15 @@ import Transport from '../components/Transport.astro';
     seedQuality?: number;
     refinementEnabled: boolean;
     refinement?: {
+      arm?: 'left' | 'right';
       confidence: number;
       edgeScore: number;
       usedRefined: boolean;
       reusedPrevious?: boolean;
       reusedDirection?: boolean;
       reusedLength?: boolean;
+      rejectedBackward?: boolean;
+      backwardDot?: number;
       angleConfidence?: number;
       endpointConfidence?: number;
       fanMargin?: number;
@@ -325,6 +366,23 @@ import Transport from '../components/Transport.astro';
       searchEnd?: { x: number; y: number };
       bestLinePoint?: { x: number; y: number };
       endpoint?: { x: number; y: number };
+      templateApplied?: boolean;
+      templateScore?: number;
+      templateSecondScore?: number;
+      templateMargin?: number;
+      templateTemplateIndex?: number;
+      templateShiftFromPrior?: number;
+      templateSearchRadiusPx?: number;
+      temporalExpected?: { x: number; y: number };
+      temporalPriorBlend?: number;
+      temporalPull?: number;
+      temporalStateConfidence?: number;
+      adaptiveExtensionMultiplier?: number;
+      adaptiveWristWeight?: number;
+      adaptiveAcceptanceEma?: number;
+      adaptiveBackwardRejectEma?: number;
+      adaptiveLengthErrorEma?: number;
+      adaptiveFanMarginEma?: number;
       fanScores?: FencersTraceFanScore[];
     };
   }
@@ -335,6 +393,60 @@ import Transport from '../components/Transport.astro';
     frameFps: number;
     mediaTime: number;
     detections: FencersTraceDetection[];
+  }
+
+  interface FencersTracePayload {
+    version: number;
+    exportedAt: number;
+    sessionId: string;
+    source: {
+      kind: SourceKind;
+      videoId: string | null;
+      videoUrl: string;
+      width: number;
+      height: number;
+      duration: number | null;
+    };
+    settings: {
+      debugMode: DebugMode;
+      inferenceFps: number;
+      refinementEnabled: boolean;
+      adaptiveTuningEnabled: boolean;
+      fencerATipExtension: number;
+      fencerBTipExtension: number;
+      fencerALengthSmoothing: number;
+      fencerBLengthSmoothing: number;
+      fencerAWristWeight: number;
+      fencerBWristWeight: number;
+      fencerAAngleOffsetDeg: number;
+      fencerBAngleOffsetDeg: number;
+    };
+    draftFromLiveSamples: {
+      fps: number;
+      sampleCounts: { A: number; B: number };
+      tracks: Array<{ id: 'A' | 'B'; keyframes: Array<{ time: number; x: number; y: number }> }>;
+    };
+    draftFromScoredSamples: {
+      fps: number;
+      minQuality: number;
+      fastMotionMinQuality: number | null;
+      fastMotionSpeedThreshold: number | null;
+      fastMotionSpeedFull: number | null;
+      maxInterpolatedGapFrames: number;
+      sampleCounts: { A: number; B: number };
+      tracks: Array<{ id: 'A' | 'B'; keyframes: Array<{ time: number; x: number; y: number }> }>;
+    };
+    trace: FencersTraceEntry[];
+  }
+
+  interface FencersAutomationRunResult {
+    payload: FencersTracePayload;
+    traceEntries: number;
+    startTimeSec: number;
+    endTimeSec: number;
+    elapsedMs: number;
+    startedAt: number;
+    endedAt: number;
   }
 
   const RECORDED_AUTOSAVE_MS = 500;
@@ -566,6 +678,10 @@ import Transport from '../components/Transport.astro';
     return Math.max(0, Math.min(1, value));
   }
 
+  function clampRange(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
   function autoSeedQualityThreshold(mode: Exclude<TrackingMode, 'recorded'>): number {
     return mode === 'fencers' ? AUTO_SEED_SCORED_MIN_QUALITY_FENCERS : AUTO_SEED_SCORED_MIN_QUALITY_DEFAULT;
   }
@@ -724,12 +840,15 @@ import Transport from '../components/Transport.astro';
         refinementEnabled: fencersTipRefinementEnabledInput.checked,
         refinement: refinement
           ? {
+              arm: refinement.arm,
               confidence: refinement.confidence,
               edgeScore: refinement.edgeScore,
               usedRefined: refinement.usedRefined,
               reusedPrevious: refinement.reusedPrevious,
               reusedDirection: refinement.reusedDirection,
               reusedLength: refinement.reusedLength,
+              rejectedBackward: refinement.rejectedBackward,
+              backwardDot: refinement.backwardDot,
               angleConfidence: refinement.angleConfidence,
               endpointConfidence: refinement.endpointConfidence,
               fanMargin: refinement.fanMargin,
@@ -752,6 +871,23 @@ import Transport from '../components/Transport.astro';
               searchEnd: refinement.searchEnd,
               bestLinePoint: refinement.bestLinePoint,
               endpoint: refinement.endpoint,
+              templateApplied: refinement.templateApplied,
+              templateScore: refinement.templateScore,
+              templateSecondScore: refinement.templateSecondScore,
+              templateMargin: refinement.templateMargin,
+              templateTemplateIndex: refinement.templateTemplateIndex,
+              templateShiftFromPrior: refinement.templateShiftFromPrior,
+              templateSearchRadiusPx: refinement.templateSearchRadiusPx,
+              temporalExpected: refinement.temporalExpected,
+              temporalPriorBlend: refinement.temporalPriorBlend,
+              temporalPull: refinement.temporalPull,
+              temporalStateConfidence: refinement.temporalStateConfidence,
+              adaptiveExtensionMultiplier: refinement.adaptiveExtensionMultiplier,
+              adaptiveWristWeight: refinement.adaptiveWristWeight,
+              adaptiveAcceptanceEma: refinement.adaptiveAcceptanceEma,
+              adaptiveBackwardRejectEma: refinement.adaptiveBackwardRejectEma,
+              adaptiveLengthErrorEma: refinement.adaptiveLengthErrorEma,
+              adaptiveFanMarginEma: refinement.adaptiveFanMarginEma,
               fanScores,
             }
           : undefined,
@@ -778,11 +914,8 @@ import Transport from '../components/Transport.astro';
     updateFencersTraceStatus();
   }
 
-  function exportFencersTrace(): void {
-    if (fencersTraceEntries.length === 0) {
-      updateFencersTraceStatus('Trace: 0 entries. Capture a run first.');
-      return;
-    }
+  function buildFencersTracePayload(): FencersTracePayload | null {
+    if (fencersTraceEntries.length === 0) return null;
 
     const draftFps = autoSeedFpsBasis();
     const draftAKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, draftFps);
@@ -792,7 +925,7 @@ import Transport from '../components/Transport.astro';
     const draftScoredAKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.A, draftFps, scoredOptions);
     const draftScoredBKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.B, draftFps, scoredOptions);
 
-    const payload = {
+    return {
       version: 1,
       exportedAt: Date.now(),
       sessionId: fencersTraceSessionId,
@@ -853,6 +986,14 @@ import Transport from '../components/Transport.astro';
       },
       trace: fencersTraceEntries,
     };
+  }
+
+  function exportFencersTrace(): void {
+    const payload = buildFencersTracePayload();
+    if (!payload) {
+      updateFencersTraceStatus('Trace: 0 entries. Capture a run first.');
+      return;
+    }
 
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const href = URL.createObjectURL(blob);
@@ -866,6 +1007,286 @@ import Transport from '../components/Transport.astro';
     URL.revokeObjectURL(href);
 
     updateFencersTraceStatus(`Trace exported: ${fencersTraceEntries.length} entries.`);
+  }
+
+  function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, Math.max(0, ms));
+    });
+  }
+
+  async function waitForCondition(
+    label: string,
+    predicate: () => boolean,
+    timeoutMs: number,
+    pollIntervalMs = 25
+  ): Promise<void> {
+    const startedAt = performance.now();
+    while (performance.now() - startedAt <= timeoutMs) {
+      if (predicate()) return;
+      await sleepMs(pollIntervalMs);
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  }
+
+  async function seekVideoForAutomation(targetSec: number, timeoutMs: number): Promise<void> {
+    if (activeSource.kind !== 'video') return;
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Number.POSITIVE_INFINITY;
+    const safeTarget = Number.isFinite(duration)
+      ? clampRange(targetSec, 0, Math.max(0, duration - 0.001))
+      : Math.max(0, targetSec);
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timeoutHandle = 0;
+
+      const cleanup = () => {
+        video.removeEventListener('seeked', onSeeked);
+        video.removeEventListener('error', onError);
+        if (timeoutHandle) window.clearTimeout(timeoutHandle);
+      };
+
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(message));
+      };
+
+      const onSeeked = () => done();
+      const onError = () => fail('Video seek failed');
+
+      video.addEventListener('seeked', onSeeked, { once: true });
+      video.addEventListener('error', onError, { once: true });
+      timeoutHandle = window.setTimeout(() => fail('Timed out waiting for seek'), timeoutMs);
+
+      video.currentTime = safeTarget;
+
+      if (Math.abs(video.currentTime - safeTarget) < 0.01 && !video.seeking) {
+        done();
+      }
+    });
+  }
+
+  async function waitForPlaybackUntil(
+    endTimeSec: number,
+    timeoutMs: number,
+    tickMs = 30
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const startedAt = performance.now();
+      let intervalHandle = 0;
+
+      const cleanup = () => {
+        video.removeEventListener('timeupdate', tick);
+        video.removeEventListener('ended', tick);
+        video.removeEventListener('error', onError);
+        if (intervalHandle) window.clearInterval(intervalHandle);
+      };
+
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(message));
+      };
+
+      const tick = () => {
+        if (video.ended || video.currentTime >= endTimeSec) {
+          video.pause();
+          done();
+          return;
+        }
+        if (performance.now() - startedAt > timeoutMs) {
+          fail(`Timed out waiting for playback to reach ${endTimeSec.toFixed(3)}s`);
+        }
+      };
+
+      const onError = () => fail('Video playback failed');
+
+      video.addEventListener('timeupdate', tick);
+      video.addEventListener('ended', tick);
+      video.addEventListener('error', onError, { once: true });
+      intervalHandle = window.setInterval(tick, Math.max(10, tickMs));
+      tick();
+    });
+  }
+
+  async function runFencersTraceCapture(config: FencersAutomationRunConfig): Promise<FencersAutomationRunResult> {
+    const trimmedVideoUrl = typeof config.videoUrl === 'string' ? config.videoUrl.trim() : '';
+    if (!trimmedVideoUrl) {
+      throw new Error('runFencersTraceCapture requires videoUrl');
+    }
+
+    const timeoutMs =
+      typeof config.timeoutMs === 'number' && Number.isFinite(config.timeoutMs)
+        ? Math.max(10_000, config.timeoutMs)
+        : 180_000;
+    const settleMs =
+      typeof config.settleMs === 'number' && Number.isFinite(config.settleMs)
+        ? Math.max(0, config.settleMs)
+        : 300;
+
+    const startedAt = Date.now();
+    const startPerf = performance.now();
+    await initPromise;
+
+    if (activeSource.kind !== 'video') {
+      await switchSource('video');
+    }
+    videoUrlInput.value = trimmedVideoUrl;
+    await loadVideoFromInput();
+
+    await waitForCondition(
+      'video source attach',
+      () => activeSource.kind === 'video' && activeSource.isAttached() && Number.isFinite(video.duration),
+      timeoutMs
+    );
+
+    const patch: Partial<AppState> = {};
+    if (typeof config.inferenceFps === 'number' && Number.isFinite(config.inferenceFps)) {
+      const inferenceFps = clampRange(Math.round(config.inferenceFps), 5, 30);
+      patch.inferenceFps = inferenceFps;
+      inferenceRateInput.value = String(inferenceFps);
+      inferenceRateValue.textContent = String(inferenceFps);
+    }
+    if (typeof config.fencerATipExtension === 'number' && Number.isFinite(config.fencerATipExtension)) {
+      const value = clampRange(config.fencerATipExtension, 1, 8);
+      patch.fencerATipExtension = value;
+      fencerATipExtensionInput.value = value.toFixed(1);
+      fencerATipExtensionValue.textContent = value.toFixed(1);
+    }
+    if (typeof config.fencerBTipExtension === 'number' && Number.isFinite(config.fencerBTipExtension)) {
+      const value = clampRange(config.fencerBTipExtension, 1, 8);
+      patch.fencerBTipExtension = value;
+      fencerBTipExtensionInput.value = value.toFixed(1);
+      fencerBTipExtensionValue.textContent = value.toFixed(1);
+    }
+    if (
+      typeof config.fencerALengthSmoothingAlpha === 'number' &&
+      Number.isFinite(config.fencerALengthSmoothingAlpha)
+    ) {
+      const value = clampRange(config.fencerALengthSmoothingAlpha, 0, 1);
+      patch.fencerALengthSmoothingAlpha = value;
+      fencerALengthSmoothingAlphaInput.value = value.toFixed(2);
+      fencerALengthSmoothingAlphaValue.textContent = value.toFixed(2);
+    }
+    if (
+      typeof config.fencerBLengthSmoothingAlpha === 'number' &&
+      Number.isFinite(config.fencerBLengthSmoothingAlpha)
+    ) {
+      const value = clampRange(config.fencerBLengthSmoothingAlpha, 0, 1);
+      patch.fencerBLengthSmoothingAlpha = value;
+      fencerBLengthSmoothingAlphaInput.value = value.toFixed(2);
+      fencerBLengthSmoothingAlphaValue.textContent = value.toFixed(2);
+    }
+    if (typeof config.fencerAWristWeight === 'number' && Number.isFinite(config.fencerAWristWeight)) {
+      const value = clampRange(config.fencerAWristWeight, 0, 1);
+      patch.fencerAWristWeight = value;
+      fencerAWristWeightInput.value = String(Math.round(value * 100));
+      fencerAWristWeightValue.textContent = String(Math.round(value * 100));
+    }
+    if (typeof config.fencerBWristWeight === 'number' && Number.isFinite(config.fencerBWristWeight)) {
+      const value = clampRange(config.fencerBWristWeight, 0, 1);
+      patch.fencerBWristWeight = value;
+      fencerBWristWeightInput.value = String(Math.round(value * 100));
+      fencerBWristWeightValue.textContent = String(Math.round(value * 100));
+    }
+    if (typeof config.fencerAAngleOffsetDeg === 'number' && Number.isFinite(config.fencerAAngleOffsetDeg)) {
+      const value = clampRange(config.fencerAAngleOffsetDeg, -30, 30);
+      patch.fencerAAngleOffsetDeg = value;
+      fencerAAngleOffsetInput.value = String(Math.round(value));
+      fencerAAngleOffsetValue.textContent = String(Math.round(value));
+    }
+    if (typeof config.fencerBAngleOffsetDeg === 'number' && Number.isFinite(config.fencerBAngleOffsetDeg)) {
+      const value = clampRange(config.fencerBAngleOffsetDeg, -30, 30);
+      patch.fencerBAngleOffsetDeg = value;
+      fencerBAngleOffsetInput.value = String(Math.round(value));
+      fencerBAngleOffsetValue.textContent = String(Math.round(value));
+    }
+    if (Object.keys(patch).length > 0) {
+      appState.update(patch);
+    }
+
+    if (typeof config.refinementEnabled === 'boolean') {
+      fencersTipRefinementEnabledInput.checked = config.refinementEnabled;
+      setFencerTipRefinementEnabled(config.refinementEnabled);
+    }
+    if (typeof config.adaptiveTuningEnabled === 'boolean') {
+      setFencerAdaptiveTuningEnabled(config.adaptiveTuningEnabled);
+    }
+
+    if (appState.get().trackingMode !== 'fencers') {
+      appState.update({ trackingMode: 'fencers' });
+    }
+    await waitForCondition('fencers detector ready', () => detector.isReady() && !detector.isSwitching(), timeoutMs);
+
+    mainLoop.start();
+
+    resetFencersTrace('automation run');
+    trailManager.clear();
+    mainLoop.clearDetections();
+
+    const rawStart =
+      typeof config.startTimeSec === 'number' && Number.isFinite(config.startTimeSec)
+        ? Math.max(0, config.startTimeSec)
+        : 0;
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Number.POSITIVE_INFINITY;
+    const startTimeSec = Number.isFinite(duration) ? clampRange(rawStart, 0, Math.max(0, duration - 0.001)) : rawStart;
+    let endTimeSec =
+      typeof config.endTimeSec === 'number' && Number.isFinite(config.endTimeSec)
+        ? Math.max(startTimeSec, config.endTimeSec)
+        : duration;
+    if (Number.isFinite(duration)) {
+      endTimeSec = clampRange(endTimeSec, startTimeSec, duration);
+    }
+
+    await seekVideoForAutomation(startTimeSec, timeoutMs);
+    if (settleMs > 0) await sleepMs(settleMs);
+
+    await tryPlayVideo();
+    if (video.paused) {
+      throw new Error('Video playback did not start (still paused)');
+    }
+
+    if (Number.isFinite(endTimeSec)) {
+      await waitForPlaybackUntil(endTimeSec, timeoutMs);
+    } else {
+      await waitForCondition('video playback end', () => video.ended, timeoutMs);
+    }
+
+    video.pause();
+
+    const payload = buildFencersTracePayload();
+    if (!payload) {
+      throw new Error('No trace entries captured. Confirm fencers detections are present in this segment.');
+    }
+
+    const endedAt = Date.now();
+    return {
+      payload,
+      traceEntries: payload.trace.length,
+      startTimeSec,
+      endTimeSec: Number.isFinite(endTimeSec) ? endTimeSec : video.currentTime,
+      elapsedMs: performance.now() - startPerf,
+      startedAt,
+      endedAt,
+    };
   }
 
   function updateRecordedPanelVisibility(): void {
@@ -2561,6 +2982,7 @@ import Transport from '../components/Transport.astro';
   }
 
   // ---- Start ----
+  let initialized = false;
   async function init() {
     applySourcePresentation();
     renderRecordedKeyframeList();
@@ -2576,9 +2998,32 @@ import Transport from '../components/Transport.astro';
     } else {
       await startCamera();
     }
+
+    initialized = true;
   }
 
-  void init();
+  const initPromise = init();
+  tipTrackDebugWindow.tipTrackAutomation = {
+    isInitialized: () => initialized,
+    resetFencersTrace: (reason = 'manual reset') => {
+      resetFencersTrace(reason);
+    },
+    buildFencersTracePayload: () => buildFencersTracePayload(),
+    runFencersTraceCapture: (config) => runFencersTraceCapture(config),
+    getStatus: () => ({
+      sourceMode: activeSource.kind,
+      trackingMode: appState.get().trackingMode,
+      detectorReady: detector.isReady(),
+      detectorSwitching: detector.isSwitching(),
+      traceEntries: fencersTraceEntries.length,
+      adaptiveEnabled: isFencerAdaptiveTuningEnabled(),
+      videoTime: video.currentTime,
+      videoDuration: video.duration,
+      videoPaused: video.paused,
+    }),
+  };
+
+  void initPromise;
 </script>
 
 <style>
