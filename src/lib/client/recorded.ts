@@ -1,6 +1,7 @@
 // Recorded (keyframed) tracks for the current video: loading, editing, autosave, import/export.
 
 import { buildRecordedFrameSnapshot } from '../recorded/playback';
+import { inRanges, mergeDraftKeyframes, type TimeRange } from '../recorded/auto-seed';
 import {
   createEmptyTrackSet,
   exportTrackSetToJson,
@@ -311,11 +312,29 @@ export function exportTrackSet(): void {
   publishStatus('Exported recorded track set.');
 }
 
-/** Replace both tracks with an auto-seeded draft. */
+/** Range-edge padding when replacing keyframes with a draft: half a frame. */
+function draftPadSeconds(fps: number): number {
+  return 0.5 / Math.max(1, fps);
+}
+
+/** Existing keyframes (both tracks) that a draft over `ranges` would replace. */
+export function keyframesInRanges(ranges: readonly TimeRange[], fps: number): number {
+  if (!trackSet) return 0;
+  const pad = draftPadSeconds(fps);
+  return trackSet.tracks.reduce(
+    (sum, track) => sum + track.keyframes.filter((kf) => inRanges(kf.time, ranges, pad)).length,
+    0
+  );
+}
+
+/**
+ * Merge an auto-seeded draft into both tracks: existing keyframes inside the captured time
+ * ranges are replaced; keyframes outside them (e.g. earlier hand corrections) are kept.
+ */
 export function applyDraft(
   a: Keyframe[],
   b: Keyframe[],
-  options: { fps: number; maxGapSeconds?: number; note: string }
+  options: { fps: number; ranges: readonly TimeRange[]; maxGapSeconds?: number; note: string }
 ): void {
   if (!session.currentVideoId || !session.currentVideoUrl) return;
   const base = trackSet ?? createEmptyTrackSet(session.currentVideoId, session.currentVideoUrl, options.fps, 1.0);
@@ -326,9 +345,10 @@ export function applyDraft(
     fps: options.fps,
     maxGapSeconds: options.maxGapSeconds ?? base.maxGapSeconds,
     tracks: base.tracks.map((track) => {
-      if (track.id === 'A') return { ...track, keyframes: a };
-      if (track.id === 'B') return { ...track, keyframes: b };
-      return track;
+      const draft = track.id === 'A' ? a : track.id === 'B' ? b : null;
+      if (!draft) return track;
+      const merged = mergeDraftKeyframes(track.keyframes, draft, options.ranges, draftPadSeconds(options.fps));
+      return { ...track, keyframes: merged.keyframes };
     }),
   };
   statusNote = options.note;

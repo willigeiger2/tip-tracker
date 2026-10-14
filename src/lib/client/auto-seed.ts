@@ -1,23 +1,26 @@
 // Auto-seed: capture live tips while a video plays, then turn them into an editable recorded draft.
 
 import {
+  captureRanges,
   keyframesFromLiveSamples,
   keyframesFromScoredSamples,
   type LiveTipSample,
   type LiveTipScoredSample,
   type ScoredKeyframeOptions,
 } from '../recorded/auto-seed';
-import { keyframeCount } from '../recorded/track-store';
 import type { FrameData } from '../app/render-modes';
 import type { TrackingMode } from '../../types/fencing';
 import { appState, clearTrails, events, isVideoSource, mainLoop, session, setStatus, video, type TrackId } from './app';
-import { applyDraft, getTrackSet } from './recorded';
+import { formatClock } from './format';
+import { applyDraft, keyframesInRanges } from './recorded';
 
 type LiveMode = Exclude<TrackingMode, 'recorded'>;
 
 export const AUTO_SEED_SCORED_MIN_QUALITY = 0.55;
 export const AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES = 0;
 const AUTO_SEED_FILTERED_MAX_GAP_SECONDS = 0.6;
+/** Capture times further apart than this (e.g. after skipping forward) form separate draft ranges. */
+const CAPTURE_RANGE_SPLIT_SECONDS = 0.5;
 export const AUTO_SEED_SCORED_OPTIONS: ScoredKeyframeOptions = {
   minQuality: AUTO_SEED_SCORED_MIN_QUALITY,
   maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
@@ -188,18 +191,24 @@ export function generateDraft(): void {
     return;
   }
 
-  const existing = getTrackSet();
-  const existingKeyframes = existing ? keyframeCount(existing) : 0;
-  if (existingKeyframes > 0) {
+  const ranges = captureRanges(
+    [...samples.A, ...samples.B].map((s) => s.time),
+    CAPTURE_RANGE_SPLIT_SECONDS
+  );
+  const replacing = keyframesInRanges(ranges, fps);
+  if (replacing > 0) {
+    const rangeText = ranges.map((r) => `${formatClock(r.start)}–${formatClock(r.end)}`).join(', ');
     const replace = window.confirm(
-      `Replace existing recorded keyframes (${existingKeyframes}) with generated draft ` +
-        `(A ${aKeyframes.length}, B ${bKeyframes.length})?`
+      `Replace ${replacing} existing keyframe${replacing === 1 ? '' : 's'} in ${rangeText} ` +
+        `with the generated draft (A ${aKeyframes.length}, B ${bKeyframes.length})?\n\n` +
+        `Keyframes outside ${ranges.length === 1 ? 'this range' : 'these ranges'} are kept.`
     );
     if (!replace) return;
   }
 
   applyDraft(aKeyframes, bKeyframes, {
     fps,
+    ranges,
     maxGapSeconds: useFilteredDraft ? AUTO_SEED_FILTERED_MAX_GAP_SECONDS : undefined,
     note:
       `Auto-seeded ${draftLabel} draft: A ${aKeyframes.length}, B ${bKeyframes.length}. ` +

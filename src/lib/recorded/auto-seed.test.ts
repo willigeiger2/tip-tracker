@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { keyframesFromLiveSamples, keyframesFromScoredSamples } from './auto-seed';
+import {
+  captureRanges,
+  keyframesFromLiveSamples,
+  keyframesFromScoredSamples,
+  mergeDraftKeyframes,
+} from './auto-seed';
 
 describe('keyframesFromLiveSamples', () => {
   it('sorts by time and clamps normalized coordinates', () => {
@@ -147,5 +152,40 @@ describe('keyframesFromScoredSamples', () => {
       { time: 0 / 30, x: 0.5, y: 0.5 },
       { time: 2 / 30, x: 0.51, y: 0.504 },
     ]);
+  });
+});
+
+describe('captureRanges', () => {
+  it('splits capture times at gaps larger than maxGap', () => {
+    expect(captureRanges([10.0, 10.1, 10.2, 40.0, 40.05, 10.15], 0.5)).toEqual([
+      { start: 10.0, end: 10.2 },
+      { start: 40.0, end: 40.05 },
+    ]);
+  });
+
+  it('returns no ranges for no times', () => {
+    expect(captureRanges([], 0.5)).toEqual([]);
+  });
+});
+
+describe('mergeDraftKeyframes', () => {
+  const kf = (time: number, x = 0.5) => ({ time, x, y: 0.5 });
+
+  it('replaces only keyframes inside the captured ranges and keeps the rest', () => {
+    const existing = [kf(5), kf(10.05), kf(10.15), kf(20), kf(40.02), kf(50)];
+    const draft = [kf(10.0, 0.1), kf(10.2, 0.1), kf(40.0, 0.1)];
+    const ranges = [
+      { start: 10.0, end: 10.2 },
+      { start: 40.0, end: 40.05 },
+    ];
+    const out = mergeDraftKeyframes(existing, draft, ranges);
+    expect(out.replaced).toBe(3);
+    expect(out.keyframes.map((k) => k.time)).toEqual([5, 10.0, 10.2, 20, 40.0, 50]);
+  });
+
+  it('pads range edges', () => {
+    const out = mergeDraftKeyframes([kf(9.99), kf(10.3)], [], [{ start: 10, end: 10.2 }], 0.02);
+    expect(out.keyframes.map((k) => k.time)).toEqual([10.3]);
+    expect(out.replaced).toBe(1);
   });
 });
