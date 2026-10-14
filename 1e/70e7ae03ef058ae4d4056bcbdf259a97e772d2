@@ -1,0 +1,19 @@
+package-lock.json
+  s_05ceede2f5c8fe::t_8c05d9b57cbe46 18,4300-4328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1e70e7ae03ef058ae4d4056bcbdf259a97e772d2",
+  "prompts": {},
+  "sessions": {
+    "s_05ceede2f5c8fe": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f2ba3c240ffeuVnLiSGPq7uTxg",
+        "model": "@cf/zai-org/glm-5.3-flash"
+      },
+      "human_author": "willi <willi@cloudflare.com>"
+    }
+  }
+}
