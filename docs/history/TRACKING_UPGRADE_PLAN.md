@@ -1,7 +1,7 @@
 # Tip Track - Tracking Upgrade Plan
 
 **Created**: 2026-09-26
-**Status**: Draft
+**Status**: Historical (Phase A implemented as fencers mode; Phase B refinement tried and removed, see `../../STATUS.md`)
 **Scope**: Improve live two-fencer tracking quality (identity stability + tip accuracy) before KV storage.
 
 ---

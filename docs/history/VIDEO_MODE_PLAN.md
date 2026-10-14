@@ -1,9 +1,9 @@
 # Tip Track - Video Mode & Recorded Tracking Plan
 
 **Created**: 2026-09-24
-**Status**: Step 6 in progress (auto-seed editable draft implementation ready for manual test)
+**Status**: Historical. Steps 1-7 complete; superseded by `STATUS.md` (2026-10-14).
 **Baseline commit**: `1842306` (main)
-**Related docs**: `TIP_TRACK_PLAN.md` (original architecture), `TIP_TRACK_RESUME.md` (session notes)
+**Related docs**: `TIP_TRACK_PLAN.md` (original architecture), `../../STATUS.md` (current status)
 
 ---
 
@@ -621,6 +621,11 @@ Storage keys:
 | 2026-09-26 | 5 | Editor/transport/render polish: live scrub preview, timeline-first editor (drag disabled), keyframe prev/next transport buttons + extra hotkeys, auto-advance frame-step consistency fix, interpolated current-frame marker, and trail rendering perf/fidelity tuning (no-blur default, optional stylized effects, longer recorded trail window). Intermittent `NotSupportedError` playback freeze still appears occasionally; mitigation auto-reloads source on Play failure, root cause deferred to backlog. |
 | 2026-09-26 | 6 | Step 6 scope updated to auto-seed editable recorded drafts (branch `video-mode/step-6-auto-seed-editable-track`) before broader fidelity hardening. |
 | 2026-09-26 | 6 | Implemented first auto-seed draft flow: capture live hand/pose tips while playing video, generate frame-deduped keyframes per track, save to recorded store, and switch directly to recorded mode for refinement. Added conversion helper tests (sort/clamp/dedupe). `npm run check`, `npm test`, and `npm run build` pass; manual browser checklist pending. |
+| 2026-09-27 | 8 | Fencers mode (two-pose tracking, stable A/B body-side assignment) merged to main (PR #3); see `TRACKING_UPGRADE_PLAN.md`. |
+| 2026-09-27 | 7 | KV track library (`/api/tracks`), coordinated autosave with localStorage mirror, saved-videos panel. |
+| 2026-10-03 | 9 | Per-fencer tuning (blade length, wrist blend, angle, smoothing), quality-scored auto-seed filtering, fencers trace export. |
+| 2026-10-04 | 10-12 | Tip-refinement experiments (template, adaptive, offline blade-line/ridge) and Playwright trace runner; no meaningful accuracy gain. Archived at tag `archive/tip-refinement-experiments`. |
+| 2026-10-14 | - | Cleanup restarted from step 9: refinement removed, fencer blade length default 4.4, forward-most weapon-arm selection, trace includes pose landmarks. Plan retired; see `STATUS.md`. |
 
 ## 11. Reference facts (verified during planning)
 
