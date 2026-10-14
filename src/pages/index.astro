@@ -21,7 +21,6 @@ import Transport from '../components/Transport.astro';
     detect,
     resetCurrentDetector,
     setFencerLengthSmoothingAlpha,
-    setFencerTipRefinementEnabled,
   } from '../lib/unified-detector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
@@ -122,7 +121,6 @@ import Transport from '../components/Transport.astro';
   const recordedGenerateHint = byId<HTMLSpanElement>('recordedGenerateHint');
   const fencersDebugGroup = byId<HTMLDivElement>('fencersDebugGroup');
   const fencersDebugOverlayInput = byId<HTMLInputElement>('fencersDebugOverlay');
-  const fencersTipRefinementEnabledInput = byId<HTMLInputElement>('fencersTipRefinementEnabled');
   const fencersTraceResetBtn = byId<HTMLButtonElement>('fencersTraceReset');
   const fencersTraceExportBtn = byId<HTMLButtonElement>('fencersTraceExport');
   const fencersTraceStatus = byId<HTMLSpanElement>('fencersTraceStatus');
@@ -267,11 +265,6 @@ import Transport from '../components/Transport.astro';
   let scrubPreviewRaf: number | null = null;
   let scrubPreviewFrame = 0;
 
-  interface FencersTraceFanScore {
-    angleDeg: number;
-    score: number;
-  }
-
   interface FencersTraceDetection {
     id: 'A' | 'B';
     side: 'left' | 'right';
@@ -286,38 +279,6 @@ import Transport from '../components/Transport.astro';
     smoothedExtensionLength?: number;
     lengthSmoothingAlpha?: number;
     seedQuality?: number;
-    refinementEnabled: boolean;
-    refinement?: {
-      confidence: number;
-      edgeScore: number;
-      usedRefined: boolean;
-      reusedPrevious?: boolean;
-      reusedDirection?: boolean;
-      reusedLength?: boolean;
-      angleConfidence?: number;
-      endpointConfidence?: number;
-      fanMargin?: number;
-      bestFanAngleDeg?: number;
-      secondFanAngleDeg?: number;
-      bestRayScore?: number;
-      secondRayScore?: number;
-      endpointScore?: number;
-      directionDeltaDeg?: number;
-      endpointLengthRatio?: number;
-      refinedShiftFromPrior?: number;
-      trustedDirection?: boolean;
-      trustedLength?: boolean;
-      refinementAccepted?: boolean;
-      bestDirection?: { x: number; y: number };
-      wrist?: { x: number; y: number };
-      prior?: { x: number; y: number };
-      refined?: { x: number; y: number };
-      searchStart?: { x: number; y: number };
-      searchEnd?: { x: number; y: number };
-      bestLinePoint?: { x: number; y: number };
-      endpoint?: { x: number; y: number };
-      fanScores?: FencersTraceFanScore[];
-    };
   }
 
   interface FencersTraceEntry {
@@ -333,12 +294,8 @@ import Transport from '../components/Transport.astro';
   const AUTO_SEED_BASE_HINT =
     'Capture live hand/pose/fencers tips while playing, then generate editable recorded keyframes.';
   const AUTO_SEED_FILTERED_MAX_GAP_SECONDS = 0.6;
-  const AUTO_SEED_SCORED_MIN_QUALITY_FENCERS = 0.82;
-  const AUTO_SEED_SCORED_MIN_QUALITY_DEFAULT = 0.55;
+  const AUTO_SEED_SCORED_MIN_QUALITY = 0.55;
   const AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES = 3;
-  const AUTO_SEED_SCORED_FAST_MOTION_MIN_QUALITY_FENCERS = 0.78;
-  const AUTO_SEED_SCORED_FAST_MOTION_SPEED_THRESHOLD_FENCERS = 0.7;
-  const AUTO_SEED_SCORED_FAST_MOTION_SPEED_FULL_FENCERS = 1.05;
   const FENCERS_TRACE_MAX_ENTRIES = 25000;
 
   let fencersTraceEntries: FencersTraceEntry[] = [];
@@ -379,7 +336,6 @@ import Transport from '../components/Transport.astro';
   fencerBWristWeightValue.textContent = String(Math.round(initialState.fencerBWristWeight * 100));
   fencerAAngleOffsetValue.textContent = String(Math.round(initialState.fencerAAngleOffsetDeg));
   fencerBAngleOffsetValue.textContent = String(Math.round(initialState.fencerBAngleOffsetDeg));
-  setFencerTipRefinementEnabled(fencersTipRefinementEnabledInput.checked);
   updateFencersTraceStatus();
 
   // ---- Configuration side effects ----
@@ -557,65 +513,13 @@ import Transport from '../components/Transport.astro';
     return Math.max(0, Math.min(1, value));
   }
 
-  function autoSeedQualityThreshold(mode: Exclude<TrackingMode, 'recorded'>): number {
-    return mode === 'fencers' ? AUTO_SEED_SCORED_MIN_QUALITY_FENCERS : AUTO_SEED_SCORED_MIN_QUALITY_DEFAULT;
-  }
+  const AUTO_SEED_SCORED_OPTIONS: ScoredKeyframeOptions = {
+    minQuality: AUTO_SEED_SCORED_MIN_QUALITY,
+    maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
+  };
 
-  function autoSeedScoredOptions(mode: Exclude<TrackingMode, 'recorded'>): ScoredKeyframeOptions {
-    const minQuality = autoSeedQualityThreshold(mode);
-    if (mode !== 'fencers') {
-      return {
-        minQuality,
-        maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
-      };
-    }
-
-    return {
-      minQuality,
-      maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
-      fastMotionMinQuality: AUTO_SEED_SCORED_FAST_MOTION_MIN_QUALITY_FENCERS,
-      fastMotionSpeedThreshold: AUTO_SEED_SCORED_FAST_MOTION_SPEED_THRESHOLD_FENCERS,
-      fastMotionSpeedFull: AUTO_SEED_SCORED_FAST_MOTION_SPEED_FULL_FENCERS,
-    };
-  }
-
-  function autoSeedDetectionQuality(
-    mode: Exclude<TrackingMode, 'recorded'>,
-    detection: FrameData['detections'][number]
-  ): number {
-    if (mode !== 'fencers') return clamp01(detection.tip.confidence);
-
-    const refinement = detection.refinement;
-    if (!refinement) return clamp01(detection.tip.confidence * 0.55);
-
-    const angleConfidence = refinement.angleConfidence ?? refinement.confidence;
-    const endpointConfidence = refinement.endpointConfidence ?? refinement.confidence;
-
-    let quality =
-      clamp01(detection.tip.confidence) * 0.18 +
-      clamp01(refinement.confidence) * 0.32 +
-      clamp01(angleConfidence) * 0.25 +
-      clamp01(endpointConfidence) * 0.25;
-
-    if (refinement.refinementAccepted) quality += 0.14;
-    if (refinement.trustedDirection) quality += 0.06;
-    if (refinement.trustedLength) quality += 0.06;
-    if (refinement.reusedPrevious) quality -= 0.05;
-
-    if (typeof refinement.fanMargin === 'number') {
-      quality += Math.min(0.1, Math.max(0, refinement.fanMargin) * 0.22);
-    }
-
-    if (typeof refinement.endpointLengthRatio === 'number' && Number.isFinite(refinement.endpointLengthRatio)) {
-      const ratioDelta = Math.abs(refinement.endpointLengthRatio - 1);
-      quality -= Math.min(0.22, Math.max(0, ratioDelta - 0.1) * 0.8);
-    }
-
-    if (typeof refinement.refinedShiftFromPrior === 'number' && Number.isFinite(refinement.refinedShiftFromPrior)) {
-      quality -= Math.min(0.2, Math.max(0, refinement.refinedShiftFromPrior - 0.05) * 3.5);
-    }
-
-    return clamp01(quality);
+  function autoSeedDetectionQuality(detection: FrameData['detections'][number]): number {
+    return clamp01(detection.tip.confidence);
   }
 
   function updateAutoSeedUi(): void {
@@ -644,7 +548,7 @@ import Transport from '../components/Transport.astro';
     const scoredB = autoSeedScoredSamples.B.length;
     const scoredTotal = autoSeedScoredSampleCount();
     const liveMode = appState.get().trackingMode;
-    const threshold = autoSeedQualityThreshold(liveMode as Exclude<TrackingMode, 'recorded'>);
+    const threshold = AUTO_SEED_SCORED_MIN_QUALITY;
     const qualifiedA = autoSeedScoredSamples.A.filter((sample) => sample.quality >= threshold).length;
     const qualifiedB = autoSeedScoredSamples.B.filter((sample) => sample.quality >= threshold).length;
     const qualifiedTotal = qualifiedA + qualifiedB;
@@ -696,12 +600,10 @@ import Transport from '../components/Transport.astro';
       }
       lastFencersTraceTimestampByTrack[id] = tipTimestamp;
 
-      const refinement = det.refinement;
-      const fanScores = refinement?.fan?.map((ray) => ({ angleDeg: ray.angleDeg, score: ray.score }));
       detections.push({
         id,
         side: det.side,
-        arm: det.arm ?? refinement?.arm ?? null,
+        arm: det.arm ?? null,
         tipTimestamp,
         tip: {
           x: det.tip.x,
@@ -711,41 +613,7 @@ import Transport from '../components/Transport.astro';
         rawExtensionLength: det.rawExtensionLength,
         smoothedExtensionLength: det.smoothedExtensionLength,
         lengthSmoothingAlpha: det.lengthSmoothingAlpha,
-        seedQuality: autoSeedDetectionQuality('fencers', det),
-        refinementEnabled: fencersTipRefinementEnabledInput.checked,
-        refinement: refinement
-          ? {
-              confidence: refinement.confidence,
-              edgeScore: refinement.edgeScore,
-              usedRefined: refinement.usedRefined,
-              reusedPrevious: refinement.reusedPrevious,
-              reusedDirection: refinement.reusedDirection,
-              reusedLength: refinement.reusedLength,
-              angleConfidence: refinement.angleConfidence,
-              endpointConfidence: refinement.endpointConfidence,
-              fanMargin: refinement.fanMargin,
-              bestFanAngleDeg: refinement.bestFanAngleDeg,
-              secondFanAngleDeg: refinement.secondFanAngleDeg,
-              bestRayScore: refinement.bestRayScore,
-              secondRayScore: refinement.secondRayScore,
-              endpointScore: refinement.endpointScore,
-              directionDeltaDeg: refinement.directionDeltaDeg,
-              endpointLengthRatio: refinement.endpointLengthRatio,
-              refinedShiftFromPrior: refinement.refinedShiftFromPrior,
-              trustedDirection: refinement.trustedDirection,
-              trustedLength: refinement.trustedLength,
-              refinementAccepted: refinement.refinementAccepted,
-              bestDirection: refinement.bestDirection,
-              wrist: refinement.wrist,
-              prior: refinement.prior,
-              refined: refinement.refined,
-              searchStart: refinement.searchStart,
-              searchEnd: refinement.searchEnd,
-              bestLinePoint: refinement.bestLinePoint,
-              endpoint: refinement.endpoint,
-              fanScores,
-            }
-          : undefined,
+        seedQuality: autoSeedDetectionQuality(det),
       });
     }
 
@@ -778,10 +646,9 @@ import Transport from '../components/Transport.astro';
     const draftFps = autoSeedFpsBasis();
     const draftAKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, draftFps);
     const draftBKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, draftFps);
-    const scoredOptions = autoSeedScoredOptions('fencers');
-    const scoredThreshold = scoredOptions.minQuality ?? autoSeedQualityThreshold('fencers');
-    const draftScoredAKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.A, draftFps, scoredOptions);
-    const draftScoredBKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.B, draftFps, scoredOptions);
+    const scoredThreshold = AUTO_SEED_SCORED_MIN_QUALITY;
+    const draftScoredAKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.A, draftFps, AUTO_SEED_SCORED_OPTIONS);
+    const draftScoredBKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.B, draftFps, AUTO_SEED_SCORED_OPTIONS);
 
     const payload = {
       version: 1,
@@ -798,7 +665,6 @@ import Transport from '../components/Transport.astro';
       settings: {
         debugMode: appState.get().debugMode,
         inferenceFps: appState.get().inferenceFps,
-        refinementEnabled: fencersTipRefinementEnabledInput.checked,
         fencerATipExtension: appState.get().fencerATipExtension,
         fencerBTipExtension: appState.get().fencerBTipExtension,
         fencerALengthSmoothing: appState.get().fencerALengthSmoothingAlpha,
@@ -822,16 +688,7 @@ import Transport from '../components/Transport.astro';
       draftFromScoredSamples: {
         fps: draftFps,
         minQuality: scoredThreshold,
-        fastMotionMinQuality:
-          typeof scoredOptions.fastMotionMinQuality === 'number' ? scoredOptions.fastMotionMinQuality : null,
-        fastMotionSpeedThreshold:
-          typeof scoredOptions.fastMotionSpeedThreshold === 'number' ? scoredOptions.fastMotionSpeedThreshold : null,
-        fastMotionSpeedFull:
-          typeof scoredOptions.fastMotionSpeedFull === 'number' ? scoredOptions.fastMotionSpeedFull : null,
-        maxInterpolatedGapFrames:
-          typeof scoredOptions.maxInterpolatedGapFrames === 'number'
-            ? scoredOptions.maxInterpolatedGapFrames
-            : AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
+        maxInterpolatedGapFrames: AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES,
         sampleCounts: {
           A: autoSeedScoredSamples.A.length,
           B: autoSeedScoredSamples.B.length,
@@ -1180,7 +1037,7 @@ import Transport from '../components/Transport.astro';
         time: mediaTime,
         x: det.tip.x,
         y: det.tip.y,
-        quality: autoSeedDetectionQuality(liveMode, det),
+        quality: autoSeedDetectionQuality(det),
       });
       capturedAny = true;
     }
@@ -1214,12 +1071,11 @@ import Transport from '../components/Transport.astro';
             x: det.tip.x,
             y: det.tip.y,
           });
-          const liveMode = appState.get().trackingMode as Exclude<TrackingMode, 'recorded'>;
           autoSeedScoredSamples[id].push({
             time: mediaTime,
             x: det.tip.x,
             y: det.tip.y,
-            quality: autoSeedDetectionQuality(liveMode, det),
+            quality: autoSeedDetectionQuality(det),
           });
         }
         totalSamples = autoSeedSampleCount();
@@ -1235,8 +1091,8 @@ import Transport from '../components/Transport.astro';
     const fps = autoSeedFpsBasis();
     const rawAKeyframes = keyframesFromLiveSamples(autoSeedSamples.A, fps);
     const rawBKeyframes = keyframesFromLiveSamples(autoSeedSamples.B, fps);
-    const scoredOptions = autoSeedScoredOptions(liveMode);
-    const scoredThreshold = scoredOptions.minQuality ?? autoSeedQualityThreshold(liveMode);
+    const scoredOptions = AUTO_SEED_SCORED_OPTIONS;
+    const scoredThreshold = AUTO_SEED_SCORED_MIN_QUALITY;
     const scoredAKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.A, fps, scoredOptions);
     const scoredBKeyframes = keyframesFromScoredSamples(autoSeedScoredSamples.B, fps, scoredOptions);
     const useFilteredDraft = liveMode === 'fencers' && autoSeedScoredSampleCount() > 0;
@@ -1635,7 +1491,6 @@ import Transport from '../components/Transport.astro';
       const bSmooth = state.fencerBLengthSmoothingAlpha.toFixed(2);
       const aAlpha = (1 - state.fencerALengthSmoothingAlpha).toFixed(2);
       const bAlpha = (1 - state.fencerBLengthSmoothingAlpha).toFixed(2);
-      const refinementMode = fencersTipRefinementEnabledInput.checked ? 'on' : 'off';
       const aWrist = Math.round(state.fencerAWristWeight * 100);
       const bWrist = Math.round(state.fencerBWristWeight * 100);
       const aAngle = Math.round(state.fencerAAngleOffsetDeg);
@@ -1657,7 +1512,7 @@ import Transport from '../components/Transport.astro';
       ctx.textBaseline = 'middle';
       ctx.fillText('Blade lines: F=Forearm W=Wrist B=Blend+Angle', 16, 21);
       ctx.fillText(
-        `R:${refinementMode} | A E${aExt}x S${aSmooth}/a${aAlpha} W${aWrist}% A${aAngle}deg | B E${bExt}x S${bSmooth}/a${bAlpha} W${bWrist}% A${bAngle}deg`,
+        `A E${aExt}x S${aSmooth}/a${aAlpha} W${aWrist}% A${aAngle}deg | B E${bExt}x S${bSmooth}/a${bAlpha} W${bWrist}% A${bAngle}deg`,
         16,
         36
       );
@@ -1667,34 +1522,9 @@ import Transport from '../components/Transport.astro';
 
     for (const detection of frame.detections) {
       const color = detection.id === 'B' ? '#ff4d5a' : '#36d67a';
-      const hasRefinement = Boolean(detection.refinement);
-      const confidence = detection.refinement ? Math.round(detection.refinement.confidence * 100) : Math.round(detection.tip.confidence * 100);
-      const confidenceLabel = detection.refinement ? `C${confidence}%` : `${confidence}%`;
-      const margin = detection.refinement?.fanMargin;
-      const marginLabel = typeof margin === 'number' ? ` M${margin.toFixed(2)}` : '';
-      const angleConf = detection.refinement?.angleConfidence;
-      const endpointConf = detection.refinement?.endpointConfidence;
-      const angleLabel = typeof angleConf === 'number' ? ` A${Math.round(angleConf * 100)}%` : '';
-      const endpointLabel = typeof endpointConf === 'number' ? ` E${Math.round(endpointConf * 100)}%` : '';
-      const frameQuality = detection.refinement
-        ? detection.refinement.confidence >= 0.2
-          ? 'GOOD'
-          : 'HOLD'
-        : '';
-      const qualityLabel = frameQuality ? ` ${frameQuality}` : '';
-      const trustLabel = detection.refinement
-        ? ` T${detection.refinement.trustedDirection ? 'D' : '-'}${detection.refinement.trustedLength ? 'L' : '-'}`
-        : '';
-      const dirDeltaLabel =
-        typeof detection.refinement?.directionDeltaDeg === 'number'
-          ? ` D${Math.round(detection.refinement.directionDeltaDeg)}d`
-          : '';
-      const shiftLabel =
-        typeof detection.refinement?.refinedShiftFromPrior === 'number'
-          ? ` S${detection.refinement.refinedShiftFromPrior.toFixed(3)}`
-          : '';
-      const reuseLabel = detection.refinement?.reusedPrevious ? ' Rprev' : '';
-      const armSide = detection.arm ?? detection.refinement?.arm;
+      const confidence = Math.round(detection.tip.confidence * 100);
+      const confidenceLabel = `${confidence}%`;
+      const armSide = detection.arm;
       const arm = armSide ? armSide[0].toUpperCase() : '?';
       const rawLen = detection.rawExtensionLength;
       const smoothLen = detection.smoothedExtensionLength;
@@ -1710,96 +1540,14 @@ import Transport from '../components/Transport.astro';
           ? ` L${rawLen.toFixed(3)}->${smoothLen.toFixed(3)} d${delta.toFixed(3)}`
           : '';
       const label =
-        `${detection.id} ${arm}${qualityLabel} ${confidenceLabel}${angleLabel}${endpointLabel}${marginLabel}` +
-        `${trustLabel}${dirDeltaLabel}${shiftLabel}${reuseLabel}${lenLabel}`;
-      const labelAnchor = detection.refinement
-        ? mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y)
-        : mapToCanvas(detection.tip.x, detection.tip.y);
+        `${detection.id} ${arm} ${confidenceLabel}${lenLabel}`;
+      const labelAnchor = mapToCanvas(detection.tip.x, detection.tip.y);
 
       ctx.save();
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
       ctx.lineWidth = 1.5;
       ctx.globalAlpha = 0.95;
-
-      if (hasRefinement && detection.refinement) {
-        const wrist = detection.refinement.wrist
-          ? mapToCanvas(detection.refinement.wrist.x, detection.refinement.wrist.y)
-          : null;
-        const prior = mapToCanvas(detection.refinement.prior.x, detection.refinement.prior.y);
-        const refined = mapToCanvas(detection.refinement.refined.x, detection.refinement.refined.y);
-        const start = mapToCanvas(detection.refinement.searchStart.x, detection.refinement.searchStart.y);
-        const end = mapToCanvas(detection.refinement.searchEnd.x, detection.refinement.searchEnd.y);
-        const bestLinePoint = detection.refinement.bestLinePoint
-          ? mapToCanvas(detection.refinement.bestLinePoint.x, detection.refinement.bestLinePoint.y)
-          : null;
-        const endpoint = detection.refinement.endpoint
-          ? mapToCanvas(detection.refinement.endpoint.x, detection.refinement.endpoint.y)
-          : null;
-
-        const fan = detection.refinement.fan ?? [];
-        if (wrist && fan.length > 0) {
-          const maxFanScore = Math.max(1, ...fan.map((ray) => Math.max(0, ray.score)));
-          for (const ray of fan) {
-            const rayEnd = mapToCanvas(ray.end.x, ray.end.y);
-            const ratio = Math.max(0, Math.min(1, ray.score / maxFanScore));
-            const alpha = 0.07 + ratio * 0.28;
-            ctx.strokeStyle = `rgba(110, 195, 255, ${alpha.toFixed(3)})`;
-            ctx.lineWidth = ratio > 0.8 ? 1.3 : 1;
-            ctx.beginPath();
-            ctx.moveTo(wrist.x, wrist.y);
-            ctx.lineTo(rayEnd.x, rayEnd.y);
-            ctx.stroke();
-          }
-        }
-
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
-        ctx.stroke();
-
-        if (wrist) {
-          ctx.setLineDash([]);
-          ctx.strokeStyle = '#ffd24a';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(wrist.x, wrist.y);
-          ctx.lineTo(end.x, end.y);
-          ctx.stroke();
-        }
-
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.arc(prior.x, prior.y, 4, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(refined.x, refined.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (bestLinePoint) {
-          ctx.fillStyle = '#ffd24a';
-          ctx.beginPath();
-          ctx.arc(bestLinePoint.x, bestLinePoint.y, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = '#111';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        }
-
-        if (endpoint) {
-          ctx.fillStyle = '#ff6ef6';
-          drawDiamond(ctx, endpoint.x, endpoint.y, 4.5);
-          ctx.fill();
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1;
-          drawDiamond(ctx, endpoint.x, endpoint.y, 6);
-          ctx.stroke();
-        }
-      }
 
       ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
       ctx.fillStyle = '#ffffff';
@@ -2292,10 +2040,6 @@ import Transport from '../components/Transport.astro';
 
   fencersTraceExportBtn.addEventListener('click', () => {
     exportFencersTrace();
-  });
-
-  fencersTipRefinementEnabledInput.addEventListener('change', () => {
-    setFencerTipRefinementEnabled(fencersTipRefinementEnabledInput.checked);
   });
 
   debugModeSelect.addEventListener('change', (e) => {

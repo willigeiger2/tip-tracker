@@ -75,46 +75,6 @@ export type EffectMode =
 // Tracking mode: hand, full-body pose, specialized two-fencer pose, or recorded keyframes.
 export type TrackingMode = 'pose' | 'fencers' | 'hand' | 'recorded';
 
-export interface TipRefinementDebug {
-  wrist?: { x: number; y: number };
-  prior: { x: number; y: number };
-  refined: { x: number; y: number };
-  searchStart: { x: number; y: number };
-  searchEnd: { x: number; y: number };
-  arm?: 'left' | 'right';
-  rawExtensionLength?: number;
-  smoothedExtensionLength?: number;
-  lengthSmoothingAlpha?: number;
-  confidence: number;
-  edgeScore: number;
-  fan?: Array<{
-    angleDeg: number;
-    score: number;
-    end: { x: number; y: number };
-  }>;
-  bestFanAngleDeg?: number;
-  secondFanAngleDeg?: number;
-  bestRayScore?: number;
-  secondRayScore?: number;
-  fanMargin?: number;
-  bestDirection?: { x: number; y: number };
-  angleConfidence?: number;
-  endpointConfidence?: number;
-  bestLinePoint?: { x: number; y: number };
-  endpoint?: { x: number; y: number };
-  endpointScore?: number;
-  directionDeltaDeg?: number;
-  endpointLengthRatio?: number;
-  refinedShiftFromPrior?: number;
-  trustedDirection?: boolean;
-  trustedLength?: boolean;
-  refinementAccepted?: boolean;
-  reusedPrevious?: boolean;
-  reusedDirection?: boolean;
-  reusedLength?: boolean;
-  usedRefined: boolean;
-}
-
 // Unified detection result - works for both pose and hand modes
 export interface DetectionResult {
   id: string;           // 'A' or 'B'
@@ -126,7 +86,6 @@ export interface DetectionResult {
   rawExtensionLength?: number; // fencers length before smoothing
   smoothedExtensionLength?: number; // fencers length after smoothing
   lengthSmoothingAlpha?: number; // internal EMA alpha (0-1)
-  refinement?: TipRefinementDebug;
 }
 
 // Tip estimator function type - modular and swappable

@@ -15,6 +15,8 @@ export interface FencerDirectionTuning {
 
 // Default extension multiplier tuned for current fencing footage.
 const DEFAULT_EXTENSION = 3.6;
+// Fencers mode default: 4.4 measured far better than 3.6 against hand-edited truth.
+const DEFAULT_FENCER_EXTENSION = 4.4;
 let poseTipExtension = DEFAULT_EXTENSION;
 
 // Minimum confidence threshold for landmarks
@@ -31,12 +33,12 @@ const directionTuningByTrack: Record<TrackId, FencerDirectionTuning> = {
   A: {
     wristWeight: DEFAULT_WRIST_WEIGHT,
     angleOffsetDeg: DEFAULT_ANGLE_OFFSET_DEG,
-    extensionMultiplier: DEFAULT_EXTENSION,
+    extensionMultiplier: DEFAULT_FENCER_EXTENSION,
   },
   B: {
     wristWeight: DEFAULT_WRIST_WEIGHT,
     angleOffsetDeg: DEFAULT_ANGLE_OFFSET_DEG,
-    extensionMultiplier: DEFAULT_EXTENSION,
+    extensionMultiplier: DEFAULT_FENCER_EXTENSION,
   },
 };
 

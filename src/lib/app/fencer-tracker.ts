@@ -1,4 +1,4 @@
-import type { DetectionResult, Landmark, TipPosition, TipRefinementDebug } from '../../types/fencing';
+import type { DetectionResult, Landmark, TipPosition } from '../../types/fencing';
 
 type TrackId = 'A' | 'B';
 type Side = 'left' | 'right';
@@ -11,7 +11,6 @@ export interface TipCandidate {
   rawExtensionLength?: number;
   smoothedExtensionLength?: number;
   lengthSmoothingAlpha?: number;
-  refinement?: TipRefinementDebug;
 }
 
 function sideForX(x: number): Side {
@@ -99,7 +98,6 @@ export class FencerTracker {
       ...(typeof candidate.lengthSmoothingAlpha === 'number'
         ? { lengthSmoothingAlpha: candidate.lengthSmoothingAlpha }
         : {}),
-      ...(candidate.refinement ? { refinement: candidate.refinement } : {}),
     };
   }
 

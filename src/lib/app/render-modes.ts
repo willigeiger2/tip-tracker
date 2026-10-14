@@ -54,10 +54,6 @@ function selectPoseArmForDetection(detection: DetectionResult): PoseArmSide | nu
     return detection.arm;
   }
 
-  if (detection.refinement?.arm) {
-    return detection.refinement.arm;
-  }
-
   const leftWrist = detection.landmarks[POSE_LANDMARKS.LEFT_WRIST];
   const rightWrist = detection.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
 

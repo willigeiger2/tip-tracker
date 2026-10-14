@@ -76,8 +76,8 @@ describe('createAppState', () => {
     expect(state.fencerBWristWeight).toBe(0.35);
     expect(state.fencerAAngleOffsetDeg).toBe(0);
     expect(state.fencerBAngleOffsetDeg).toBe(0);
-    expect(state.fencerATipExtension).toBe(3.6);
-    expect(state.fencerBTipExtension).toBe(3.6);
+    expect(state.fencerATipExtension).toBe(4.4);
+    expect(state.fencerBTipExtension).toBe(4.4);
     expect(state.fencerALengthSmoothingAlpha).toBe(0.68);
     expect(state.fencerBLengthSmoothingAlpha).toBe(0.68);
   });
