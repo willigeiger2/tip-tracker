@@ -225,6 +225,7 @@ async function main() {
       const status = await page.locator('#fencersTraceStatus').innerText();
       if (!/Trace: \d+ entries/.test(status) || /Trace: 0 entries/.test(status)) throw new Error(`trace status "${status}"`);
       const [download] = await Promise.all([page.waitForEvent('download'), page.click('#fencersTraceExport')]);
+      if (await page.locator('#controls.collapsed').count()) throw new Error('export collapsed the panel');
       const trace = JSON.parse(await streamToString(await download.createReadStream()));
       const withPose = trace.trace.filter((e) => e.detections.some((d) => d.pose)).length;
       if (!trace.trace.length || !withPose) throw new Error('trace export has no entries with pose landmarks');
