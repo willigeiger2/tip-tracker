@@ -1,0 +1,153 @@
+---
+// Saved-video library (track sets stored in Workers KV), video source only.
+---
+
+<div id="savedVideosPanel" class="control-group hidden">
+  <div class="recorded-list-header">
+    <span>Saved Videos</span>
+    <button id="savedVideosRefresh" type="button" class="saved-videos-refresh">Refresh</button>
+  </div>
+  <div id="savedVideosList" class="recorded-keyframe-list"></div>
+  <span id="savedVideosStatus" class="hint">Video library unavailable until a video source is active.</span>
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { events, isVideoSource, session } from '../../lib/client/app';
+  import { formatClockTime } from '../../lib/client/format';
+  import { getSummaries, isLoading, refreshLibrary, savedVideoTitle } from '../../lib/client/library';
+  import { loadVideoFromLibrary } from '../../lib/client/sources';
+
+  const panel = byId<HTMLDivElement>('savedVideosPanel');
+  const refreshBtn = byId<HTMLButtonElement>('savedVideosRefresh');
+  const list = byId<HTMLDivElement>('savedVideosList');
+  const status = byId<HTMLSpanElement>('savedVideosStatus');
+
+  function render(): void {
+    const inCameraMode = !isVideoSource();
+    panel.classList.toggle('hidden', inCameraMode);
+    refreshBtn.disabled = inCameraMode || isLoading();
+
+    if (isLoading()) {
+      list.innerHTML = '<div class="hint">Loading library...</div>';
+      return;
+    }
+    const summaries = getSummaries();
+    if (summaries.length === 0) {
+      list.innerHTML = '<div class="hint">No saved videos in library yet.</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+    for (const summary of summaries) {
+      const row = document.createElement('div');
+      row.className = 'saved-video-row';
+
+      const main = document.createElement('div');
+      main.className = 'saved-video-main';
+
+      const title = document.createElement('span');
+      title.className = 'saved-video-title';
+      title.textContent = savedVideoTitle(summary);
+
+      const meta = document.createElement('span');
+      meta.className = 'saved-video-meta';
+      const keyframes = `${summary.keyframeCount} keyframe${summary.keyframeCount === 1 ? '' : 's'}`;
+      meta.textContent = `${keyframes} · ${formatClockTime(summary.updatedAt)}`;
+
+      main.appendChild(title);
+      main.appendChild(meta);
+
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'saved-video-load';
+      loadBtn.textContent = 'Load';
+      loadBtn.dataset.videoUrl = summary.videoUrl;
+      if (session.currentVideoId === summary.videoId) loadBtn.classList.add('active');
+
+      row.appendChild(main);
+      row.appendChild(loadBtn);
+      list.appendChild(row);
+    }
+  }
+
+  refreshBtn.addEventListener('click', () => void refreshLibrary());
+  list.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement) || !target.classList.contains('saved-video-load')) return;
+    const url = target.dataset.videoUrl?.trim() ?? '';
+    if (url) void loadVideoFromLibrary(url);
+  });
+
+  events.on('library', render);
+  events.on('source', render);
+  events.on('recorded', render);
+  events.on('library-status', (text) => {
+    status.textContent = text;
+  });
+</script>
+
+<style>
+  .saved-videos-refresh {
+    width: auto;
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 0.72rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.92);
+  }
+
+  .recorded-keyframe-list :global(.saved-video-row) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 6px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .recorded-keyframe-list :global(.saved-video-row:last-child) {
+    margin-bottom: 0;
+  }
+
+  .recorded-keyframe-list :global(.saved-video-main) {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .recorded-keyframe-list :global(.saved-video-title) {
+    font-size: 0.79rem;
+    color: rgba(255, 255, 255, 0.95);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .recorded-keyframe-list :global(.saved-video-meta) {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.62);
+  }
+
+  .recorded-keyframe-list :global(.saved-video-load) {
+    width: auto;
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 0.74rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.95);
+    align-self: center;
+  }
+
+  .recorded-keyframe-list :global(.saved-video-load.active) {
+    border-color: rgba(54, 214, 122, 0.8);
+    color: #36d67a;
+  }
+</style>

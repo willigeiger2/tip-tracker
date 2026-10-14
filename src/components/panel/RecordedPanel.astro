@@ -1,0 +1,261 @@
+---
+// Recorded tracks for the current video: JSON import/export and the keyframe editor.
+---
+
+<div id="recordedPanel" class="control-group hidden">
+  <label for="recordedJsonInput">Recorded Tracks (A green, B red)</label>
+  <textarea id="recordedJsonInput" rows="4" placeholder="Paste RecordedTrackSet JSON here" spellcheck="false"
+  ></textarea>
+  <div class="recorded-actions">
+    <button id="recordedImportPaste" type="button" class="btn-secondary compact-btn">Import JSON</button>
+    <button id="recordedExportJson" type="button" class="btn-secondary compact-btn">Export JSON</button>
+  </div>
+  <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
+  <small class="hint">Tip: leave the JSON box empty and click Import JSON to pick a file.</small>
+  <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
+
+  <div class="recorded-editor">
+    <label class="inline-toggle">
+      <input id="recordedEditToggle" type="checkbox" />
+      <span>Edit keyframes</span>
+    </label>
+
+    <div id="recordedEditorControls" class="hidden">
+      <div class="recorded-editor-grid">
+        <label for="recordedActiveTrack">Active Track</label>
+        <select id="recordedActiveTrack">
+          <option value="A">Track A (Green)</option>
+          <option value="B">Track B (Red)</option>
+        </select>
+
+        <label for="recordedAutoAdvance">Auto-advance</label>
+        <select id="recordedAutoAdvance">
+          <option value="0">Off</option>
+          <option value="next">Next keyframe</option>
+          <option value="1">1 frame</option>
+          <option value="2" selected>2 frames</option>
+          <option value="5">5 frames</option>
+          <option value="10">10 frames</option>
+        </select>
+      </div>
+
+      <div class="recorded-actions">
+        <button id="recordedDeleteFrame" type="button" class="btn-secondary compact-btn">Delete At Frame</button>
+        <button id="recordedClearTrack" type="button" class="btn-secondary compact-btn">Clear Track</button>
+      </div>
+
+      <div class="recorded-list-wrap">
+        <div class="recorded-list-header">
+          <span>Keyframes</span>
+          <small class="hint">Jump: [ ] or , .</small>
+        </div>
+        <div id="recordedKeyframeList" class="recorded-keyframe-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { appState, events, session } from '../../lib/client/app';
+  import { listKeyframesWithFrames } from '../../lib/recorded/keyframes';
+  import { formatClock } from '../../lib/client/format';
+  import {
+    activeTrackLabel,
+    clearActiveTrack,
+    deleteActiveKeyframeAtCurrentFrame,
+    deleteActiveKeyframeAtFrame,
+    exportTrackSet,
+    getActiveTrack,
+    getAutoAdvanceMode,
+    getRecordedFps,
+    getTrack,
+    getTrackSet,
+    importTrackSet,
+    isEditMode,
+    isEditorActive,
+    isRecordedPanelVisible,
+    jumpToFrame,
+    parseAutoAdvanceMode,
+    publishStatus,
+    setActiveTrack,
+    setAutoAdvanceMode,
+    setEditMode,
+  } from '../../lib/client/recorded';
+
+  const panel = byId<HTMLDivElement>('recordedPanel');
+  const jsonInput = byId<HTMLTextAreaElement>('recordedJsonInput');
+  const importBtn = byId<HTMLButtonElement>('recordedImportPaste');
+  const exportBtn = byId<HTMLButtonElement>('recordedExportJson');
+  const importFile = byId<HTMLInputElement>('recordedImportFile');
+  const status = byId<HTMLSpanElement>('recordedStatus');
+  const editToggle = byId<HTMLInputElement>('recordedEditToggle');
+  const editorControls = byId<HTMLDivElement>('recordedEditorControls');
+  const activeTrackSelect = byId<HTMLSelectElement>('recordedActiveTrack');
+  const autoAdvanceSelect = byId<HTMLSelectElement>('recordedAutoAdvance');
+  const deleteFrameBtn = byId<HTMLButtonElement>('recordedDeleteFrame');
+  const clearTrackBtn = byId<HTMLButtonElement>('recordedClearTrack');
+  const keyframeList = byId<HTMLDivElement>('recordedKeyframeList');
+
+  autoAdvanceSelect.value = String(getAutoAdvanceMode());
+
+  function renderVisibility(): void {
+    const show = isRecordedPanelVisible();
+    panel.classList.toggle('hidden', !show);
+    jsonInput.disabled = !show;
+    importBtn.disabled = !show;
+    exportBtn.disabled = !show;
+    importFile.disabled = !show;
+    editToggle.disabled = !show;
+
+    const controlsVisible = show && isEditMode();
+    editorControls.classList.toggle('hidden', !controlsVisible);
+    activeTrackSelect.disabled = !controlsVisible;
+    autoAdvanceSelect.disabled = !controlsVisible;
+    deleteFrameBtn.disabled = !controlsVisible;
+    clearTrackBtn.disabled = !controlsVisible;
+  }
+
+  function renderKeyframeList(): void {
+    keyframeList.innerHTML = '';
+    const track = getTrack(getActiveTrack());
+    if (!track) {
+      keyframeList.innerHTML = '<div class="hint">No active track.</div>';
+      return;
+    }
+    const rows = listKeyframesWithFrames(track, getRecordedFps());
+    if (rows.length === 0) {
+      keyframeList.innerHTML = '<div class="hint">No keyframes yet.</div>';
+      return;
+    }
+    for (const row of rows) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'recorded-keyframe-row';
+
+      const jump = document.createElement('button');
+      jump.type = 'button';
+      jump.className = 'recorded-keyframe-jump';
+      jump.dataset.frame = String(row.frame);
+      jump.textContent = `f${row.frame}  ${formatClock(row.time)}`;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'recorded-keyframe-delete';
+      del.dataset.frame = String(row.frame);
+      del.textContent = 'Del';
+
+      rowEl.appendChild(jump);
+      rowEl.appendChild(del);
+      keyframeList.appendChild(rowEl);
+    }
+  }
+
+  function render(): void {
+    editToggle.checked = isEditMode();
+    activeTrackSelect.value = getActiveTrack();
+    renderVisibility();
+    renderKeyframeList();
+  }
+
+  importBtn.addEventListener('click', () => {
+    if (!session.currentVideoId || !session.currentVideoUrl) {
+      publishStatus('Load a video first.');
+      return;
+    }
+    const text = jsonInput.value.trim();
+    if (!text) {
+      importFile.click();
+      return;
+    }
+    importTrackSet(text, 'Imported recorded track set.', 'Import failed: invalid track-set JSON.');
+  });
+
+  importFile.addEventListener('change', async () => {
+    const file = importFile.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    importFile.value = '';
+    importTrackSet(text, `Imported ${file.name}.`, 'Import failed: invalid file JSON.');
+  });
+
+  exportBtn.addEventListener('click', () => exportTrackSet());
+  editToggle.addEventListener('change', () => setEditMode(editToggle.checked));
+  activeTrackSelect.addEventListener('change', () => setActiveTrack(activeTrackSelect.value === 'B' ? 'B' : 'A'));
+  autoAdvanceSelect.addEventListener('change', () => {
+    const next = parseAutoAdvanceMode(autoAdvanceSelect.value);
+    if (next !== null) setAutoAdvanceMode(next);
+  });
+
+  deleteFrameBtn.addEventListener('click', () => {
+    if (!isEditorActive()) return;
+    if (deleteActiveKeyframeAtCurrentFrame()) {
+      publishStatus('Deleted keyframe at current frame.');
+    }
+  });
+
+  clearTrackBtn.addEventListener('click', () => {
+    if (!isEditorActive() || !getTrackSet()) return;
+    if (!window.confirm(`Clear all keyframes from ${activeTrackLabel()}?`)) return;
+    clearActiveTrack();
+  });
+
+  keyframeList.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const frame = Number.parseInt(target.dataset.frame ?? '', 10);
+    if (!Number.isFinite(frame)) return;
+    if (target.classList.contains('recorded-keyframe-jump')) {
+      jumpToFrame(frame);
+    } else if (target.classList.contains('recorded-keyframe-delete')) {
+      deleteActiveKeyframeAtFrame(frame);
+    }
+  });
+
+  events.on('recorded', render);
+  events.on('source', render);
+  appState.on('trackingMode', render);
+  events.on('recorded-status', (text) => {
+    status.textContent = text;
+  });
+  events.on('track-set-loaded', () => {
+    jsonInput.value = '';
+  });
+</script>
+
+<style>
+  .recorded-editor-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .recorded-list-wrap {
+    margin-top: 10px;
+  }
+
+  .recorded-keyframe-list :global(.recorded-keyframe-row) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .recorded-keyframe-list :global(.recorded-keyframe-row:last-child) {
+    margin-bottom: 0;
+  }
+
+  .recorded-keyframe-list :global(.recorded-keyframe-jump),
+  .recorded-keyframe-list :global(.recorded-keyframe-delete) {
+    padding: 6px 8px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .recorded-keyframe-list :global(.recorded-keyframe-delete) {
+    min-width: 46px;
+  }
+</style>

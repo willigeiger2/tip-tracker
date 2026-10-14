@@ -1,0 +1,68 @@
+---
+// Tracking mode picker plus the auto-seed "Generate Recorded Draft" action. Mode-specific
+// settings (e.g. the fencers panel) go in the default slot.
+---
+
+<div class="control-group">
+  <label for="trackingMode">Tracking Mode</label>
+  <select id="trackingMode">
+    <option value="hand">Hand Tracking (Demo)</option>
+    <option value="pose">Pose Tracking (Full Body)</option>
+    <option value="fencers">Fencers Tracking (2 Pose)</option>
+    <option value="recorded">Recorded Points (Video Only)</option>
+  </select>
+  <small class="hint">Hand: index fingertip = sword tip. Clash flash is hand mode only.</small>
+  <button id="recordedGenerateDraft" type="button" class="btn-secondary compact-btn hidden">
+    Generate Recorded Draft
+  </button>
+  <small id="recordedGenerateHint" class="hint hidden">
+    Capture live hand/pose tips while playing, then generate editable recorded keyframes.
+  </small>
+
+  <slot />
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { appState, detector, events, isVideoSource } from '../../lib/client/app';
+  import { draftUiState, generateDraft } from '../../lib/client/auto-seed';
+  import type { TrackingMode } from '../../types/fencing';
+
+  const trackingModeSelect = byId<HTMLSelectElement>('trackingMode');
+  const recordedOption = trackingModeSelect.querySelector<HTMLOptionElement>('option[value="recorded"]');
+  const generateBtn = byId<HTMLButtonElement>('recordedGenerateDraft');
+  const generateHint = byId<HTMLElement>('recordedGenerateHint');
+
+  trackingModeSelect.value = appState.get().trackingMode;
+
+  trackingModeSelect.addEventListener('change', () => {
+    if (detector.isSwitching()) return;
+    const mode = trackingModeSelect.value as TrackingMode;
+    if (mode === 'recorded' && !isVideoSource()) {
+      trackingModeSelect.value = appState.get().trackingMode;
+      return;
+    }
+    appState.update({ trackingMode: mode });
+  });
+
+  generateBtn.addEventListener('click', () => generateDraft());
+
+  function renderDraftUi(): void {
+    const ui = draftUiState();
+    generateBtn.classList.toggle('hidden', !ui.visible);
+    generateHint.classList.toggle('hidden', !ui.visible);
+    generateBtn.disabled = !ui.enabled;
+    generateHint.textContent = ui.hint;
+  }
+
+  appState.on('trackingMode', (mode) => {
+    trackingModeSelect.value = mode;
+    renderDraftUi();
+  });
+  events.on('source', () => {
+    if (recordedOption) recordedOption.disabled = !isVideoSource();
+    renderDraftUi();
+  });
+  events.on('auto-seed', renderDraftUi);
+  events.on('recorded', renderDraftUi);
+</script>

@@ -1,0 +1,81 @@
+---
+// Panel footer: clear trails / camera toggle, and the status line.
+---
+
+<div class="control-group button-group">
+  <button id="clearTrails" class="btn-secondary">Clear Trails</button>
+  <button id="toggleCamera" class="btn-primary camera-only">Start Camera</button>
+</div>
+
+<div class="status">
+  <span id="detectionStatus">Initializing...</span>
+  <span id="playbackStatus">camera</span>
+  <span id="fpsCounter">-- fps</span>
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { cameraSource, events, isVideoSource, trailManager, video } from '../../lib/client/app';
+  import { toggleCamera } from '../../lib/client/sources';
+
+  const clearTrailsBtn = byId<HTMLButtonElement>('clearTrails');
+  const toggleCameraBtn = byId<HTMLButtonElement>('toggleCamera');
+  const detectionStatus = byId<HTMLSpanElement>('detectionStatus');
+  const playbackStatus = byId<HTMLSpanElement>('playbackStatus');
+  const fpsCounter = byId<HTMLSpanElement>('fpsCounter');
+
+  function renderPlaybackStatus(): void {
+    if (!isVideoSource()) {
+      playbackStatus.textContent = 'camera';
+      return;
+    }
+    const dimensions =
+      video.videoWidth > 0 && video.videoHeight > 0 ? `${video.videoWidth}x${video.videoHeight}` : '--x--';
+    let state = 'paused';
+    if (video.seeking) state = 'seeking';
+    else if (video.ended) state = 'ended';
+    else if (!video.paused) state = 'playing';
+    playbackStatus.textContent = `${dimensions} ${state}`;
+  }
+
+  clearTrailsBtn.addEventListener('click', () => trailManager.clear());
+  toggleCameraBtn.addEventListener('click', () => void toggleCamera());
+
+  events.on('status', (text) => {
+    detectionStatus.textContent = text;
+  });
+  events.on('fps', (fps) => {
+    fpsCounter.textContent = `${fps} fps`;
+  });
+  events.on('source', () => {
+    toggleCameraBtn.textContent = cameraSource.isAttached() ? 'Stop Camera' : 'Start Camera';
+    renderPlaybackStatus();
+  });
+  for (const eventName of ['loadedmetadata', 'loadeddata', 'durationchange', 'timeupdate', 'play', 'pause', 'seeking', 'seeked', 'ended', 'resize']) {
+    video.addEventListener(eventName, renderPlaybackStatus);
+  }
+</script>
+
+<style>
+  .status {
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    margin-top: 18px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  #playbackStatus {
+    font-family: monospace;
+    color: rgba(255, 255, 255, 0.65);
+    white-space: nowrap;
+  }
+
+  #fpsCounter {
+    font-family: monospace;
+    color: rgba(255, 255, 255, 0.7);
+  }
+</style>

@@ -1,6 +1,6 @@
 ---
-// Floating transport controls for video mode (step 3).
-// Hidden in camera mode; behavior is wired by id from index.astro.
+// Floating transport controls for video mode: play/pause, frame and keyframe stepping, seek
+// slider, time/frame readout, fps badge (click to override). Also owns the keyboard shortcuts.
 ---
 
 <div id="transportBar" class="video-only hidden" aria-label="Video transport">
@@ -37,6 +37,91 @@
     ~30 fps
   </button>
 </div>
+
+<script>
+  import { byId } from '../lib/client/dom';
+  import { frameIndex, seekTimeForFrame } from '../lib/app/frame-rate';
+  import { appState, events, isVideoSource, session, video } from '../lib/client/app';
+  import { formatClock } from '../lib/client/format';
+  import { activeTrackHasKeyframes, jumpNeighborKeyframe } from '../lib/client/recorded';
+  import { installShortcuts } from '../lib/client/shortcuts';
+  import {
+    beginSeekDrag,
+    endSeekDrag,
+    frameRate,
+    promptFpsOverride,
+    seekDragState,
+    stepFrames,
+    togglePlay,
+    updateSeekDrag,
+  } from '../lib/client/transport';
+
+  const playPauseBtn = byId<HTMLButtonElement>('transportPlayPause');
+  const stepBackBtn = byId<HTMLButtonElement>('transportStepBack');
+  const stepForwardBtn = byId<HTMLButtonElement>('transportStepForward');
+  const prevKeyframeBtn = byId<HTMLButtonElement>('transportPrevKeyframe');
+  const nextKeyframeBtn = byId<HTMLButtonElement>('transportNextKeyframe');
+  const seek = byId<HTMLInputElement>('transportSeek');
+  const readout = byId<HTMLSpanElement>('transportReadout');
+  const fpsBtn = byId<HTMLButtonElement>('transportFps');
+
+  function render(): void {
+    const uiFps = frameRate();
+    const hasDuration = Number.isFinite(video.duration) && video.duration > 0;
+    const duration = hasDuration ? video.duration : 0;
+    const currentFrame = frameIndex(video.currentTime, uiFps);
+    const maxFrame = Math.max(0, frameIndex(duration, uiFps));
+    const drag = seekDragState();
+
+    seek.min = '0';
+    seek.max = String(Math.max(1, maxFrame));
+    if (!drag.dragging) {
+      seek.value = String(Math.min(Math.max(currentFrame, 0), Math.max(1, maxFrame)));
+    }
+
+    const displayedFrame = drag.dragging ? drag.frame : currentFrame;
+    const displayedTime = drag.dragging ? seekTimeForFrame(drag.frame, uiFps, duration) : video.currentTime;
+    readout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  f${displayedFrame}`;
+
+    playPauseBtn.textContent = video.paused || video.ended ? 'Play' : 'Pause';
+
+    const disabled = !isVideoSource() || !hasDuration;
+    seek.disabled = disabled;
+    playPauseBtn.disabled = disabled;
+    stepBackBtn.disabled = disabled;
+    stepForwardBtn.disabled = disabled;
+    prevKeyframeBtn.disabled = disabled || !activeTrackHasKeyframes();
+    nextKeyframeBtn.disabled = disabled || !activeTrackHasKeyframes();
+
+    const fps = session.transportFps;
+    const fpsText = fps >= 100 ? fps.toFixed(0) : fps.toFixed(2).replace(/\.00$/, '');
+    fpsBtn.textContent = `${session.transportFpsApproximate ? '~' : ''}${fpsText} fps`;
+    fpsBtn.disabled = !isVideoSource() || !session.currentVideoId;
+  }
+
+  playPauseBtn.addEventListener('click', () => void togglePlay());
+  stepBackBtn.addEventListener('click', () => stepFrames(-1));
+  stepForwardBtn.addEventListener('click', () => stepFrames(1));
+  prevKeyframeBtn.addEventListener('click', () => jumpNeighborKeyframe(-1));
+  nextKeyframeBtn.addEventListener('click', () => jumpNeighborKeyframe(1));
+  fpsBtn.addEventListener('click', () => promptFpsOverride());
+
+  seek.addEventListener('pointerdown', () => beginSeekDrag());
+  seek.addEventListener('input', () => updateSeekDrag(Number.parseInt(seek.value, 10)));
+  const commitSeekFromSlider = () => endSeekDrag(Number.parseInt(seek.value, 10));
+  seek.addEventListener('change', commitSeekFromSlider);
+  seek.addEventListener('pointerup', commitSeekFromSlider);
+
+  for (const eventName of ['loadedmetadata', 'loadeddata', 'durationchange', 'timeupdate', 'play', 'pause', 'seeking', 'seeked', 'ended', 'resize']) {
+    video.addEventListener(eventName, render);
+  }
+  events.on('transport', render);
+  events.on('recorded', render);
+  events.on('source', render);
+  appState.on('trackingMode', render);
+
+  installShortcuts();
+</script>
 
 <style>
   #transportBar {
@@ -100,10 +185,6 @@
   .transport-fps {
     min-width: 72px;
     text-align: center;
-  }
-
-  .hidden {
-    display: none !important;
   }
 
   @media (max-width: 760px) {
