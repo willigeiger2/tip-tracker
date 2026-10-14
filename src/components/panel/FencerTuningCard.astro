@@ -1,0 +1,59 @@
+---
+// Per-fencer tuning for fencers mode: weapon arm, blade length, smoothing, wrist blend, angle.
+import RangeControl from '../controls/RangeControl.astro';
+import SelectControl from '../controls/SelectControl.astro';
+
+interface Props {
+  fencer: 'A' | 'B';
+}
+
+const { fencer } = Astro.props;
+const color = fencer === 'A' ? 'Green' : 'Red';
+const p = `fencer${fencer}` as const;
+---
+
+<div class="fencer-tuning-card">
+  <h3>Fencer {fencer} ({color})</h3>
+  <SelectControl
+    id={`${p}WeaponArm`}
+    label="Weapon Arm"
+    stateKey={`${p}WeaponArm`}
+    options={[
+      { value: 'auto', label: 'Auto (forward-most)' },
+      { value: 'right', label: 'Right (pose label)' },
+      { value: 'left', label: 'Left (pose label)' },
+    ]}
+  />
+  <RangeControl id={`${p}TipExtension`} label="Tip Extension" stateKey={`${p}TipExtension`} min={1} max={8} step={0.1} decimals={1} suffix="x" />
+  <RangeControl id={`${p}LengthSmoothingAlpha`} label="Length Smoothing" stateKey={`${p}LengthSmoothingAlpha`} min={0} max={1} step={0.01} decimals={2} />
+  <RangeControl id={`${p}WristWeight`} label="Wrist Blend" stateKey={`${p}WristWeight`} min={0} max={100} step={1} scale={100} suffix="%" />
+  <RangeControl id={`${p}AngleOffset`} label="Angle Adjust" stateKey={`${p}AngleOffsetDeg`} min={-30} max={30} step={1} suffix="&deg;" />
+</div>
+
+<style>
+  .fencer-tuning-card {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .fencer-tuning-card h3 {
+    margin: 0 0 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .fencer-tuning-card :global(label) {
+    margin-bottom: 4px;
+  }
+
+  .fencer-tuning-card :global(input[type='range']) {
+    margin-bottom: 8px;
+  }
+
+  .fencer-tuning-card :global(input[type='range']:last-child) {
+    margin-bottom: 0;
+  }
+</style>

@@ -1,0 +1,68 @@
+---
+// Fencers-mode settings: debug overlay toggle, per-fencer tuning, trace export.
+import FencerTuningCard from './FencerTuningCard.astro';
+---
+
+<div id="fencersDebugGroup" class="hidden">
+  <label class="inline-toggle">
+    <input id="fencersDebugOverlay" type="checkbox" />
+    <span>Fencers debug overlay</span>
+  </label>
+
+  <div class="fencer-tuning-grid">
+    <FencerTuningCard fencer="A" />
+    <FencerTuningCard fencer="B" />
+  </div>
+
+  <small class="hint">0.00 = no smoothing, 1.00 = strongest smoothing. Skeleton/all shows F, W, and B direction lines.</small>
+  <div class="recorded-actions">
+    <button id="fencersTraceReset" type="button" class="btn-secondary compact-btn">Reset Trace</button>
+    <button id="fencersTraceExport" type="button" class="btn-secondary compact-btn">Export Trace</button>
+  </div>
+  <small id="fencersTraceStatus" class="hint">Trace: 0 entries.</small>
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { appState, events } from '../../lib/client/app';
+  import { exportTrace, publishTraceStatus, resetTrace } from '../../lib/client/fencers-trace';
+  import { setFencersDebugOverlay } from '../../lib/client/overlays';
+
+  const group = byId<HTMLElement>('fencersDebugGroup');
+  const overlayToggle = byId<HTMLInputElement>('fencersDebugOverlay');
+  const resetBtn = byId<HTMLButtonElement>('fencersTraceReset');
+  const exportBtn = byId<HTMLButtonElement>('fencersTraceExport');
+  const status = byId<HTMLElement>('fencersTraceStatus');
+
+  function updateVisibility(): void {
+    const show = appState.get().trackingMode === 'fencers';
+    group.classList.toggle('hidden', !show);
+    overlayToggle.disabled = !show;
+    resetBtn.disabled = !show;
+    if (!show) {
+      overlayToggle.checked = false;
+      setFencersDebugOverlay(false);
+    }
+    publishTraceStatus();
+  }
+
+  overlayToggle.addEventListener('change', () => setFencersDebugOverlay(overlayToggle.checked));
+  resetBtn.addEventListener('click', () => resetTrace('manual reset'));
+  exportBtn.addEventListener('click', () => exportTrace());
+
+  events.on('trace', ({ text, canExport }) => {
+    status.textContent = text;
+    exportBtn.disabled = !canExport;
+  });
+  appState.on('trackingMode', updateVisibility);
+  events.on('source', updateVisibility);
+</script>
+
+<style>
+  .fencer-tuning-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin: 10px 0 6px;
+  }
+</style>

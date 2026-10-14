@@ -1,0 +1,42 @@
+---
+// Labelled slider bound to a numeric app-state key. The slider shows `state * scale`
+// (e.g. scale 100 shows a 0-1 weight as a percentage).
+import { DEFAULT_APP_STATE } from '../../lib/app/state';
+import type { NumericStateKey } from '../../lib/client/state-controls';
+
+interface Props {
+  id: string;
+  label: string;
+  stateKey: NumericStateKey;
+  min: number;
+  max: number;
+  step: number;
+  scale?: number;
+  decimals?: number;
+  suffix?: string;
+}
+
+const { id, label, stateKey, min, max, step, scale = 1, decimals = 0, suffix = '' } = Astro.props;
+const value = Math.round(DEFAULT_APP_STATE[stateKey] * scale * 1e6) / 1e6;
+const valueId = `${id}Value`;
+---
+
+<label for={id}>{label}: <span id={valueId}>{value.toFixed(decimals)}</span><Fragment set:html={suffix} /></label>
+<input
+  id={id}
+  type="range"
+  min={min}
+  max={max}
+  step={step}
+  value={value}
+  data-state-key={stateKey}
+  data-scale={scale}
+  data-decimals={decimals}
+  data-value-target={valueId}
+/>
+
+<script>
+  import { bindRangeControls } from '../../lib/client/state-controls';
+
+  bindRangeControls();
+</script>

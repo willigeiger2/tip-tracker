@@ -1,0 +1,56 @@
+---
+// Rendering settings: debug mode, trail length, inference rate, effects, pose-mode tip extension.
+import RangeControl from '../controls/RangeControl.astro';
+import SelectControl from '../controls/SelectControl.astro';
+---
+
+<div class="control-group">
+  <SelectControl
+    id="debugMode"
+    label="Debug Mode"
+    stateKey="debugMode"
+    options={[
+      { value: 'none', label: 'Production (Trails)' },
+      { value: 'landmarks', label: 'Landmarks' },
+      { value: 'skeleton', label: 'Skeleton' },
+      { value: 'vectors', label: 'Vectors + Grid' },
+      { value: 'tips-only', label: 'Tip Points' },
+      { value: 'trails-only', label: 'Trails Only' },
+      { value: 'lightsaber', label: 'Lightsaber' },
+      { value: 'heatmap', label: 'Heatmap' },
+      { value: 'all', label: 'All Debug' },
+    ]}
+  />
+</div>
+
+<div class="control-group">
+  <RangeControl id="trailLength" label="Trail Length" stateKey="trailLength" min={5} max={120} step={5} />
+</div>
+
+<div class="control-group">
+  <RangeControl id="inferenceRate" label="Inference Rate" stateKey="inferenceFps" min={5} max={30} step={1} suffix=" fps" />
+</div>
+
+<details class="advanced-controls">
+  <summary>Advanced / Effects</summary>
+  <div class="control-group">
+    <SelectControl
+      id="effectMode"
+      label="Effect Mode"
+      stateKey="effectMode"
+      options={[
+        { value: 'none', label: 'None' },
+        { value: 'lightsaber-glow', label: 'Lightsaber Glow' },
+        { value: 'matrix', label: 'Matrix' },
+        { value: 'motion-blur', label: 'Motion Blur' },
+      ]}
+    />
+  </div>
+  <div class="control-group">
+    <RangeControl id="glowIntensity" label="Glow Intensity" stateKey="glowIntensity" min={0} max={2} step={0.1} decimals={1} />
+  </div>
+  <div class="control-group">
+    <RangeControl id="poseTipExtension" label="Pose Mode Tip Extension" stateKey="poseTipExtension" min={1} max={8} step={0.1} decimals={1} suffix="x" />
+    <small class="hint">Pose mode only. Higher values push the tip farther past the wrist.</small>
+  </div>
+</details>

@@ -1,272 +1,43 @@
 ---
-// Collapsible controls panel + hamburger toggle. Markup only; behavior is wired in index.astro
-// by element id, so ids here are part of the page's contract.
+// Collapsible controls panel + hamburger toggle. Panel sections are passed in the default slot.
+// Shared form/button styles for all panel sections live here (global, scoped under #controls via
+// :where() so they keep element-level specificity and sections can override them).
 ---
 
-<!-- Hamburger Menu Toggle -->
 <button id="menuToggle" aria-label="Toggle menu">
   <span></span>
   <span></span>
   <span></span>
 </button>
 
-<!-- Collapsible Controls Panel -->
 <div id="controls" class="collapsed">
   <h1>Tip Track</h1>
-
-  <div class="control-group">
-    <label for="sourceMode">Source</label>
-    <select id="sourceMode">
-      <option value="camera">Camera</option>
-      <option value="video">Video URL</option>
-    </select>
-  </div>
-
-  <div id="videoSourceGroup" class="control-group video-only hidden">
-    <label for="videoUrl">Video URL (HLS or MP4 with CORS)</label>
-    <input
-      type="url"
-      id="videoUrl"
-      placeholder="https://.../manifest/video.m3u8"
-      spellcheck="false"
-      autocomplete="off"
-    />
-    <button id="loadVideo" type="button" class="btn-secondary compact-btn">Load Video</button>
-    <small class="hint">Tip: add <code>?video=&lt;url&gt;</code> to auto-load this clip.</small>
-  </div>
-  
-  <div class="control-group">
-    <label for="trackingMode">Tracking Mode</label>
-    <select id="trackingMode">
-      <option value="hand">Hand Tracking (Demo)</option>
-      <option value="pose">Pose Tracking (Full Body)</option>
-      <option value="fencers">Fencers Tracking (2 Pose)</option>
-      <option value="recorded">Recorded Points (Video Only)</option>
-    </select>
-    <small class="hint">Hand: index fingertip = sword tip. Clash flash is hand mode only.</small>
-    <button id="recordedGenerateDraft" type="button" class="btn-secondary compact-btn video-only hidden">
-      Generate Recorded Draft
-    </button>
-    <small id="recordedGenerateHint" class="hint video-only hidden">
-      Capture live hand/pose tips while playing, then generate editable recorded keyframes.
-    </small>
-
-    <div id="fencersDebugGroup" class="hidden">
-      <label class="inline-toggle">
-        <input id="fencersDebugOverlay" type="checkbox" />
-        <span>Fencers debug overlay</span>
-      </label>
-
-      <div class="fencer-tuning-grid">
-        <div class="fencer-tuning-card">
-          <h3>Fencer A (Green)</h3>
-          <label for="fencerAWeaponArm">Weapon Arm</label>
-          <select id="fencerAWeaponArm">
-            <option value="auto" selected>Auto (forward-most)</option>
-            <option value="right">Right (pose label)</option>
-            <option value="left">Left (pose label)</option>
-          </select>
-          <label for="fencerATipExtension">Tip Extension: <span id="fencerATipExtensionValue">4.4</span>x</label>
-          <input id="fencerATipExtension" type="range" min="1" max="8" value="4.4" step="0.1" />
-          <label for="fencerALengthSmoothingAlpha">Length Smoothing: <span id="fencerALengthSmoothingAlphaValue">0.68</span></label>
-          <input id="fencerALengthSmoothingAlpha" type="range" min="0" max="1" value="0.68" step="0.01" />
-          <label for="fencerAWristWeight">Wrist Blend: <span id="fencerAWristWeightValue">35</span>%</label>
-          <input id="fencerAWristWeight" type="range" min="0" max="100" value="35" step="1" />
-          <label for="fencerAAngleOffset">Angle Adjust: <span id="fencerAAngleOffsetValue">0</span>&deg;</label>
-          <input id="fencerAAngleOffset" type="range" min="-30" max="30" value="0" step="1" />
-        </div>
-
-        <div class="fencer-tuning-card">
-          <h3>Fencer B (Red)</h3>
-          <label for="fencerBWeaponArm">Weapon Arm</label>
-          <select id="fencerBWeaponArm">
-            <option value="auto" selected>Auto (forward-most)</option>
-            <option value="right">Right (pose label)</option>
-            <option value="left">Left (pose label)</option>
-          </select>
-          <label for="fencerBTipExtension">Tip Extension: <span id="fencerBTipExtensionValue">4.4</span>x</label>
-          <input id="fencerBTipExtension" type="range" min="1" max="8" value="4.4" step="0.1" />
-          <label for="fencerBLengthSmoothingAlpha">Length Smoothing: <span id="fencerBLengthSmoothingAlphaValue">0.68</span></label>
-          <input id="fencerBLengthSmoothingAlpha" type="range" min="0" max="1" value="0.68" step="0.01" />
-          <label for="fencerBWristWeight">Wrist Blend: <span id="fencerBWristWeightValue">35</span>%</label>
-          <input id="fencerBWristWeight" type="range" min="0" max="100" value="35" step="1" />
-          <label for="fencerBAngleOffset">Angle Adjust: <span id="fencerBAngleOffsetValue">0</span>&deg;</label>
-          <input id="fencerBAngleOffset" type="range" min="-30" max="30" value="0" step="1" />
-        </div>
-      </div>
-
-      <small class="hint">0.00 = no smoothing, 1.00 = strongest smoothing. Skeleton/all shows F, W, and B direction lines.</small>
-      <div class="recorded-actions">
-        <button id="fencersTraceReset" type="button" class="btn-secondary compact-btn">Reset Trace</button>
-        <button id="fencersTraceExport" type="button" class="btn-secondary compact-btn">Export Trace</button>
-      </div>
-      <small id="fencersTraceStatus" class="hint">Trace: 0 entries.</small>
-    </div>
-  </div>
-
-  <div id="recordedPanel" class="control-group video-only hidden">
-    <label for="recordedJsonInput">Recorded Tracks (A green, B red)</label>
-    <textarea
-      id="recordedJsonInput"
-      rows="4"
-      placeholder="Paste RecordedTrackSet JSON here"
-      spellcheck="false"
-    ></textarea>
-    <div class="recorded-actions">
-      <button id="recordedImportPaste" type="button" class="btn-secondary compact-btn">Import JSON</button>
-      <button id="recordedExportJson" type="button" class="btn-secondary compact-btn">Export JSON</button>
-    </div>
-    <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
-    <small class="hint">Tip: leave the JSON box empty and click Import JSON to pick a file.</small>
-    <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
-
-    <div class="recorded-editor">
-      <label class="inline-toggle">
-        <input id="recordedEditToggle" type="checkbox" />
-        <span>Edit keyframes</span>
-      </label>
-
-      <div id="recordedEditorControls" class="hidden">
-        <div class="recorded-editor-grid">
-        <label for="recordedActiveTrack">Active Track</label>
-        <select id="recordedActiveTrack">
-          <option value="A">Track A (Green)</option>
-          <option value="B">Track B (Red)</option>
-        </select>
-
-        <label for="recordedAutoAdvance">Auto-advance</label>
-        <select id="recordedAutoAdvance">
-          <option value="0">Off</option>
-          <option value="next">Next keyframe</option>
-          <option value="1">1 frame</option>
-          <option value="2" selected>2 frames</option>
-          <option value="5">5 frames</option>
-          <option value="10">10 frames</option>
-        </select>
-        </div>
-
-        <div class="recorded-actions">
-          <button id="recordedDeleteFrame" type="button" class="btn-secondary compact-btn">Delete At Frame</button>
-          <button id="recordedClearTrack" type="button" class="btn-secondary compact-btn">Clear Track</button>
-        </div>
-
-        <div class="recorded-list-wrap">
-          <div class="recorded-list-header">
-            <span>Keyframes</span>
-            <small class="hint">Jump: [ ] or , .</small>
-          </div>
-          <div id="recordedKeyframeList" class="recorded-keyframe-list"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="savedVideosPanel" class="control-group video-only hidden">
-    <div class="recorded-list-header">
-      <span>Saved Videos</span>
-      <button id="savedVideosRefresh" type="button" class="saved-videos-refresh">Refresh</button>
-    </div>
-    <div id="savedVideosList" class="recorded-keyframe-list"></div>
-    <span id="savedVideosStatus" class="hint">Video library unavailable until a video source is active.</span>
-  </div>
-
-  <div class="control-group">
-    <label for="debugMode">Debug Mode</label>
-    <select id="debugMode">
-      <option value="none">Production (Trails)</option>
-      <option value="landmarks">Landmarks</option>
-      <option value="skeleton">Skeleton</option>
-      <option value="vectors">Vectors + Grid</option>
-      <option value="tips-only">Tip Points</option>
-      <option value="trails-only">Trails Only</option>
-      <option value="lightsaber">Lightsaber</option>
-      <option value="heatmap">Heatmap</option>
-      <option value="all">All Debug</option>
-    </select>
-  </div>
-
-  <div class="control-group">
-    <label for="trailLength">
-      Trail Length: <span id="trailLengthValue">30</span>
-    </label>
-    <input
-      type="range"
-      id="trailLength"
-      min="5"
-      max="120"
-      value="30"
-      step="5"
-    />
-  </div>
-
-  <div class="control-group">
-    <label for="inferenceRate">
-      Inference Rate: <span id="inferenceRateValue">15</span> fps
-    </label>
-    <input 
-      type="range" 
-      id="inferenceRate" 
-      min="5" 
-      max="30" 
-      value="15" 
-      step="1"
-    />
-  </div>
-
-  <details class="advanced-controls">
-    <summary>Advanced / Effects</summary>
-    <div class="control-group">
-      <label for="effectMode">Effect Mode</label>
-      <select id="effectMode">
-        <option value="none">None</option>
-        <option value="lightsaber-glow">Lightsaber Glow</option>
-        <option value="matrix">Matrix</option>
-        <option value="motion-blur">Motion Blur</option>
-      </select>
-    </div>
-    <div class="control-group">
-      <label for="glowIntensity">
-        Glow Intensity: <span id="glowIntensityValue">1.0</span>
-      </label>
-      <input 
-        type="range" 
-        id="glowIntensity" 
-        min="0" 
-        max="2" 
-        value="1" 
-        step="0.1"
-      />
-    </div>
-    <div class="control-group">
-      <label for="poseTipExtension">
-        Pose Mode Tip Extension: <span id="poseTipExtensionValue">3.6</span>x
-      </label>
-      <input
-        type="range"
-        id="poseTipExtension"
-        min="1"
-        max="8"
-        value="3.6"
-        step="0.1"
-      />
-      <small class="hint">Pose mode only. Higher values push the tip farther past the wrist.</small>
-    </div>
-  </details>
-
-  <div class="control-group button-group">
-    <button id="clearTrails" class="btn-secondary">Clear Trails</button>
-    <button id="toggleCamera" class="btn-primary camera-only">Start Camera</button>
-  </div>
-
-  <div class="status">
-    <span id="detectionStatus">Initializing...</span>
-    <span id="playbackStatus">camera</span>
-    <span id="fpsCounter">-- fps</span>
-  </div>
+  <slot />
 </div>
 
+<script>
+  import { byId } from '../lib/client/dom';
+  import { stage } from '../lib/client/app';
+  import { isEditorActive } from '../lib/client/recorded';
+
+  const menuToggle = byId<HTMLElement>('menuToggle');
+  const controls = byId<HTMLElement>('controls');
+
+  menuToggle.addEventListener('click', () => {
+    controls.classList.toggle('collapsed');
+  });
+
+  // Clicking outside the panel collapses it (except clicks on the stage while editing keyframes).
+  document.addEventListener('click', (e) => {
+    const target = e.target as Node;
+    if (isEditorActive() && stage.contains(target)) return;
+    if (!controls.contains(target) && !menuToggle.contains(target)) {
+      controls.classList.add('collapsed');
+    }
+  });
+</script>
+
 <style>
-  /* Hamburger Menu Toggle */
   #menuToggle {
     position: absolute;
     top: 20px;
@@ -282,6 +53,7 @@
     justify-content: center;
     align-items: center;
     gap: 6px;
+    padding: 12px;
     z-index: 1001;
     transition: background 0.3s ease;
   }
@@ -298,7 +70,6 @@
     transition: all 0.3s ease;
   }
 
-  /* Controls Panel */
   #controls {
     position: absolute;
     top: 20px;
@@ -330,378 +101,6 @@
     color: white;
   }
 
-  .control-group {
-    margin-bottom: 18px;
-  }
-
-  .control-group:last-child {
-    margin-bottom: 0;
-  }
-
-  label {
-    display: block;
-    font-size: 0.9rem;
-    font-weight: 500;
-    margin-bottom: 6px;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  select,
-  input[type="range"],
-  input[type="url"],
-  textarea {
-    width: 100%;
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
-    font-size: 0.9rem;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  input[type="url"] {
-    cursor: text;
-  }
-
-  textarea {
-    min-height: 76px;
-    resize: vertical;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.78rem;
-    cursor: text;
-  }
-
-  select:focus, input:focus {
-    outline: none;
-    border-color: rgba(255, 255, 255, 0.4);
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  select option {
-    background: #1a1a1a;
-    color: white;
-  }
-
-  input[type="range"] {
-    padding: 0;
-    height: 6px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
-    cursor: pointer;
-  }
-
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: white;
-    cursor: pointer;
-    transition: transform 0.2s ease;
-  }
-
-  input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: white;
-    cursor: pointer;
-    border: none;
-  }
-
-  .hint {
-    display: block;
-    font-size: 0.75rem;
-    color: rgba(255, 255, 255, 0.5);
-    margin-top: 4px;
-    font-style: italic;
-  }
-
-  .advanced-controls {
-    margin: 15px 0;
-    padding: 10px 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .advanced-controls summary {
-    cursor: pointer;
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.6);
-    user-select: none;
-    transition: color 0.2s ease;
-  }
-
-  .advanced-controls summary:hover {
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .advanced-controls[open] summary {
-    margin-bottom: 15px;
-  }
-
-  .button-group {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .compact-btn {
-    margin-top: 8px;
-    padding: 9px;
-    font-size: 0.85rem;
-  }
-
-  .recorded-actions {
-    margin-top: 8px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .recorded-actions button {
-    width: auto;
-    flex: 1;
-    margin-top: 0;
-  }
-
-  .recorded-editor {
-    margin-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.12);
-    padding-top: 10px;
-  }
-
-  .inline-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .inline-toggle input[type="checkbox"] {
-    width: auto;
-    margin: 0;
-  }
-
-  .fencer-tuning-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
-    margin: 10px 0 6px;
-  }
-
-  .fencer-tuning-card {
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 8px;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .fencer-tuning-card h3 {
-    margin: 0 0 6px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .fencer-tuning-card label {
-    margin-bottom: 4px;
-  }
-
-  .fencer-tuning-card input[type='range'] {
-    margin-bottom: 8px;
-  }
-
-  .fencer-tuning-card input[type='range']:last-child {
-    margin-bottom: 0;
-  }
-
-  .recorded-editor-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-
-  .recorded-list-wrap {
-    margin-top: 10px;
-  }
-
-  .recorded-list-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-  }
-
-  .recorded-keyframe-list {
-    max-height: 180px;
-    overflow-y: auto;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
-    padding: 4px;
-  }
-
-  .recorded-keyframe-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 6px;
-    margin-bottom: 4px;
-  }
-
-  .recorded-keyframe-row:last-child {
-    margin-bottom: 0;
-  }
-
-  .recorded-keyframe-jump,
-  .recorded-keyframe-delete {
-    padding: 6px 8px;
-    font-size: 0.78rem;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.06);
-    color: #fff;
-    cursor: pointer;
-  }
-
-  .recorded-keyframe-delete {
-    min-width: 46px;
-  }
-
-  .saved-videos-refresh {
-    width: auto;
-    margin: 0;
-    padding: 4px 8px;
-    font-size: 0.72rem;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.92);
-  }
-
-  .saved-video-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 8px;
-    padding: 6px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    margin-bottom: 6px;
-    background: rgba(255, 255, 255, 0.04);
-  }
-
-  .saved-video-row:last-child {
-    margin-bottom: 0;
-  }
-
-  .saved-video-main {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .saved-video-title {
-    font-size: 0.79rem;
-    color: rgba(255, 255, 255, 0.95);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .saved-video-meta {
-    font-size: 0.72rem;
-    color: rgba(255, 255, 255, 0.62);
-  }
-
-  .saved-video-load {
-    width: auto;
-    margin: 0;
-    padding: 6px 10px;
-    font-size: 0.74rem;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.95);
-    align-self: center;
-  }
-
-  .saved-video-load.active {
-    border-color: rgba(54, 214, 122, 0.8);
-    color: #36d67a;
-  }
-
-  .hidden {
-    display: none;
-  }
-
-  button {
-    width: 100%;
-    padding: 12px;
-    border-radius: 8px;
-    border: 2px solid transparent;
-    font-size: 0.95rem;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-primary {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.3);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    background: rgba(255, 255, 255, 0.2);
-    border-color: rgba(255, 255, 255, 0.5);
-    transform: translateY(-1px);
-  }
-
-  .btn-secondary {
-    background: transparent;
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  .status {
-    display: flex;
-    gap: 10px;
-    justify-content: space-between;
-    margin-top: 18px;
-    padding-top: 15px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    font-size: 0.8rem;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  #playbackStatus {
-    font-family: monospace;
-    color: rgba(255, 255, 255, 0.65);
-    white-space: nowrap;
-  }
-
-  #fpsCounter {
-    font-family: monospace;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  /* Scrollbar styling for controls panel */
   #controls::-webkit-scrollbar {
     width: 6px;
   }
@@ -718,5 +117,221 @@
 
   #controls::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
+  }
+</style>
+
+<style is:global>
+  :where(#controls) .control-group {
+    margin-bottom: 18px;
+  }
+
+  :where(#controls) .control-group:last-child {
+    margin-bottom: 0;
+  }
+
+  :where(#controls) label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  :where(#controls) select,
+  :where(#controls) input[type="range"],
+  :where(#controls) input[type="url"],
+  :where(#controls) textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-size: 0.9rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  :where(#controls) input[type="url"] {
+    cursor: text;
+  }
+
+  :where(#controls) textarea {
+    min-height: 76px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    cursor: text;
+  }
+
+  :where(#controls) select:focus,
+  :where(#controls) input:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  :where(#controls) select option {
+    background: #1a1a1a;
+    color: white;
+  }
+
+  :where(#controls) input[type="range"] {
+    padding: 0;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  :where(#controls) input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+
+  :where(#controls) input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+  }
+
+  :where(#controls) input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    border: none;
+  }
+
+  :where(#controls) .hint {
+    display: block;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 4px;
+    font-style: italic;
+  }
+
+  :where(#controls) .advanced-controls {
+    margin: 15px 0;
+    padding: 10px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  :where(#controls) .advanced-controls summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.6);
+    user-select: none;
+    transition: color 0.2s ease;
+  }
+
+  :where(#controls) .advanced-controls summary:hover {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  :where(#controls) .advanced-controls[open] summary {
+    margin-bottom: 15px;
+  }
+
+  :where(#controls) .button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  :where(#controls) .compact-btn {
+    margin-top: 8px;
+    padding: 9px;
+    font-size: 0.85rem;
+  }
+
+  :where(#controls) .recorded-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  :where(#controls) .recorded-actions button {
+    width: auto;
+    flex: 1;
+    margin-top: 0;
+  }
+
+  :where(#controls) .recorded-editor {
+    margin-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    padding-top: 10px;
+  }
+
+  :where(#controls) .inline-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  :where(#controls) .inline-toggle input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+  }
+
+  :where(#controls) .recorded-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  :where(#controls) button {
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    font-size: 0.95rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  :where(#controls) .btn-primary {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: white;
+  }
+
+  :where(#controls) .btn-primary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.5);
+    transform: translateY(-1px);
+  }
+
+  :where(#controls) .btn-secondary {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  :where(#controls) .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  :where(#controls) .recorded-keyframe-list {
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 4px;
   }
 </style>

@@ -1,0 +1,26 @@
+---
+// Labelled select bound to a string app-state key.
+import { DEFAULT_APP_STATE } from '../../lib/app/state';
+import type { StringStateKey } from '../../lib/client/state-controls';
+
+interface Props {
+  id: string;
+  label: string;
+  stateKey: StringStateKey;
+  options: Array<{ value: string; label: string }>;
+}
+
+const { id, label, stateKey, options } = Astro.props;
+const current = String(DEFAULT_APP_STATE[stateKey]);
+---
+
+<label for={id}>{label}</label>
+<select id={id} data-state-key={stateKey}>
+  {options.map((option) => <option value={option.value} selected={option.value === current}>{option.label}</option>)}
+</select>
+
+<script>
+  import { bindSelectControls } from '../../lib/client/state-controls';
+
+  bindSelectControls();
+</script>

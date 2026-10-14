@@ -23,6 +23,7 @@ hamburger menu (top right) for controls.
 | `npm run dev` | Dev server with the Cloudflare runtime (workerd, local KV simulation) |
 | `npm run check` | Type-check `.astro` and `.ts` files (`astro check`) |
 | `npm test` | Unit tests (vitest) for the pure modules under `src/lib` |
+| `npm run smoke` | Browser smoke test (Playwright) against a running dev server; first run `npx playwright install chromium` |
 | `npm run build` | Production build to `dist/` |
 | `npm run deploy` | Build and `wrangler deploy` |
 | `npm run cf-typegen` | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` |
@@ -75,11 +76,20 @@ Errors are reported in source-video pixels (mean/median/p90, and hit rates withi
 ```
 src/
 ├── pages/
-│   ├── index.astro               # the app page: markup shell + client wiring
+│   ├── index.astro               # composition only: layout + components, no script
 │   └── api/tracks/               # KV-backed track library API (GET list, GET/PUT by videoId)
-├── components/                   # ControlPanel.astro, Transport.astro
-├── layouts/Layout.astro
+├── layouts/Layout.astro          # html shell, global base styles
+├── components/
+│   ├── VideoStage.astro          # video + overlay canvas; starts the app
+│   ├── ControlPanel.astro        # collapsible panel shell + shared panel styles
+│   ├── Transport.astro           # video transport bar + keyboard shortcuts
+│   ├── panel/                    # panel sections: Source, Tracking, Fencers (+ FencerTuningCard),
+│   │                             # Recorded, SavedVideos, Display, PanelFooter
+│   └── controls/                 # RangeControl / SelectControl bound to app state
 ├── lib/
+│   ├── client/                   # browser controllers used by component scripts: app context +
+│   │                             # events, sources, transport, recorded editing, auto-seed,
+│   │                             # fencers trace, library, overlays, shortcuts, boot
 │   ├── app/                      # state store, main loop, render modes, coordinate mapping,
 │   │                             # overlay sizing, detector controller, fencer A/B tracker,
 │   │                             # frame-rate detection, video sources (camera, URL)
@@ -93,7 +103,14 @@ src/
 └── types/fencing.ts
 ```
 
-Pure modules under `src/lib` have vitest coverage; DOM-bound behaviour is checked manually.
+Each component owns its markup, styles and a short `<script>` that wires its own elements to
+the controllers in `src/lib/client`; controllers notify components through a small typed event
+emitter (`lib/client/events.ts`) and the app state store (`lib/app/state.ts`).
+
+Pure modules under `src/lib` have vitest coverage. `npm run smoke` drives the app in headless
+Chromium (fake camera, the test clip) against a running `npm run dev`, clicking through sources,
+tracking modes, settings, draft generation, keyframe editing and import/export; it fails on any
+page or console error and never writes to the KV library.
 
 ## MediaPipe runtime
 
