@@ -101,8 +101,18 @@ export function isEditorActive(): boolean {
   return isRecordedPanelVisible() && editMode && trackSet !== null;
 }
 
+/** Frame math always uses the video's reported fps (or the manual override). */
 export function getRecordedFps(): number {
-  return trackSet?.fps || session.transportFps;
+  return session.transportFps;
+}
+
+/**
+ * Keep the stored fps of the loaded track set equal to the video's fps. Keyframes are stored
+ * by time, so this only changes frame numbering. Persisted with the next save.
+ */
+function syncTrackSetFps(): void {
+  if (!trackSet || session.transportFpsApproximate) return;
+  trackSet.fps = session.transportFps;
 }
 
 export function getTrack(trackId: TrackId) {
@@ -216,6 +226,7 @@ export async function loadOrCreateTrackSet(url: string): Promise<void> {
   chosen.videoId = videoId;
   chosen.videoUrl = url;
   trackSet = chosen;
+  syncTrackSetFps();
   saveTrackSet(trackSet, { touchUpdatedAt: false });
 
   if (remote && local) {
@@ -327,11 +338,12 @@ export function applyDraft(
   publishStatus();
 }
 
-/** Set the fps stored with the track set (manual fps override). */
+/** Set the fps stored with the track set (follows the video's fps; saves only on change). */
 export function setTrackSetFps(fps: number): void {
-  if (!trackSet) return;
+  if (!trackSet || trackSet.fps === fps) return;
   trackSet.fps = fps;
   scheduleAutosave(0);
+  changed();
 }
 
 // ---- Frame navigation ----

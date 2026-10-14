@@ -16,7 +16,7 @@ import { applyDraft, getTrackSet } from './recorded';
 type LiveMode = Exclude<TrackingMode, 'recorded'>;
 
 export const AUTO_SEED_SCORED_MIN_QUALITY = 0.55;
-export const AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES = 3;
+export const AUTO_SEED_SCORED_MAX_INTERP_GAP_FRAMES = 0;
 const AUTO_SEED_FILTERED_MAX_GAP_SECONDS = 0.6;
 export const AUTO_SEED_SCORED_OPTIONS: ScoredKeyframeOptions = {
   minQuality: AUTO_SEED_SCORED_MIN_QUALITY,
@@ -34,9 +34,9 @@ export function detectionQuality(detection: FrameData['detections'][number]): nu
   return Math.max(0, Math.min(1, detection.tip.confidence));
 }
 
-/** Fps basis for drafts: keep an existing recorded set's fps so frame math stays consistent. */
+/** Fps basis for drafts: the video's reported fps. */
 export function draftFps(): number {
-  return getTrackSet()?.fps || session.transportFps;
+  return session.transportFps;
 }
 
 function sampleCount(): number {

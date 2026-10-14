@@ -9,17 +9,17 @@ import {
   seekTimeForFrame,
 } from '../app/frame-rate';
 import { deriveVideoId } from '../recorded/video-id';
-import { appState, events, isVideoSource, session, setStatus, urlSource, video } from './app';
-import { getRecordedFps, setTrackSetFps } from './recorded';
+import { events, isVideoSource, session, setStatus, urlSource, video } from './app';
+import { setTrackSetFps } from './recorded';
 
 let isDraggingSeek = false;
 let seekDragFrame = 0;
 let scrubPreviewRaf: number | null = null;
 let scrubPreviewFrame = 0;
 
-/** Frame rate used for transport frame math (the recorded set's fps in recorded mode). */
+/** Frame rate used for all frame math: the video's reported fps (or the manual override). */
 export function frameRate(): number {
-  return appState.get().trackingMode === 'recorded' ? getRecordedFps() : session.transportFps;
+  return session.transportFps;
 }
 
 export function seekDragState(): { dragging: boolean; frame: number } {
@@ -30,6 +30,7 @@ export function setTransportFps(fps: number, approximate: boolean): void {
   if (!Number.isFinite(fps) || fps <= 0) return;
   session.transportFps = fps;
   session.transportFpsApproximate = approximate;
+  if (!approximate) setTrackSetFps(fps);
   events.emit('transport');
 }
 
@@ -59,7 +60,6 @@ export function promptFpsOverride(): void {
   if (!Number.isFinite(parsed) || parsed <= 1 || parsed > 240) return;
   saveFpsOverride(session.currentVideoId, parsed);
   setTransportFps(parsed, false);
-  setTrackSetFps(parsed);
 }
 
 export function commitSeek(frame: number): void {

@@ -79,7 +79,7 @@ export function publishTraceStatus(customMessage?: string): void {
   }
   const last = entries[entries.length - 1];
   events.emit('trace', {
-    text: `Trace: ${entries.length} entries (last f${last.frame} @ ${last.mediaTime.toFixed(3)}s, f30 ${last.frameAt30}).`,
+    text: `Trace: ${entries.length} entries (last f${last.frame} @ ${last.mediaTime.toFixed(3)}s).`,
     canExport: inFencersMode(),
   });
 }

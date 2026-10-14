@@ -40,7 +40,7 @@
 
 <script>
   import { byId } from '../lib/client/dom';
-  import { DEFAULT_FRAME_RATE, frameIndex, seekTimeForFrame } from '../lib/app/frame-rate';
+  import { frameIndex, seekTimeForFrame } from '../lib/app/frame-rate';
   import { appState, events, isVideoSource, session, video } from '../lib/client/app';
   import { formatClock } from '../lib/client/format';
   import { activeTrackHasKeyframes, jumpNeighborKeyframe } from '../lib/client/recorded';
@@ -81,12 +81,7 @@
 
     const displayedFrame = drag.dragging ? drag.frame : currentFrame;
     const displayedTime = drag.dragging ? seekTimeForFrame(drag.frame, uiFps, duration) : video.currentTime;
-    const canonicalFrame = frameIndex(displayedTime, DEFAULT_FRAME_RATE);
-    const frameReadout =
-      Math.abs(uiFps - DEFAULT_FRAME_RATE) < 0.01
-        ? `f${displayedFrame}`
-        : `f${displayedFrame}@${uiFps.toFixed(2)} / f30 ${canonicalFrame}`;
-    readout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  ${frameReadout}`;
+    readout.textContent = `${formatClock(displayedTime)} / ${formatClock(duration)}  f${displayedFrame}`;
 
     playPauseBtn.textContent = video.paused || video.ended ? 'Play' : 'Pause';
 
