@@ -8,6 +8,7 @@ export interface TipCandidate {
   landmarks: Landmark[];
   bodyX?: number;
   arm?: 'left' | 'right';
+  armMargin?: number | null;
   rawExtensionLength?: number;
   smoothedExtensionLength?: number;
   lengthSmoothingAlpha?: number;
@@ -89,6 +90,7 @@ export class FencerTracker {
       },
       landmarks: candidate.landmarks,
       ...(candidate.arm ? { arm: candidate.arm } : {}),
+      ...(candidate.armMargin !== undefined ? { armMargin: candidate.armMargin } : {}),
       ...(typeof candidate.rawExtensionLength === 'number'
         ? { rawExtensionLength: candidate.rawExtensionLength }
         : {}),

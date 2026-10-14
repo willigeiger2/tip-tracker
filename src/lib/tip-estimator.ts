@@ -326,7 +326,27 @@ export function estimateTipForArm(
   if (!wrist || !elbow) {
     return null;
   }
-  
+
+  return estimateTipFromJoints({ wrist, elbow, shoulder, handHints }, timestamp, side, trackId);
+}
+
+/**
+ * Estimate tip position from explicit arm joints (fencers mode picks the joints itself, since
+ * MediaPipe's left/right labels are unreliable on fencing footage).
+ */
+export function estimateTipFromJoints(
+  joints: {
+    wrist: Landmark;
+    elbow: Landmark;
+    shoulder?: Landmark;
+    handHints?: { index?: Landmark; thumb?: Landmark; pinky?: Landmark };
+  },
+  timestamp: number,
+  side: 'left' | 'right',
+  trackId?: TrackId
+): TipPosition | null {
+  const { wrist, elbow, shoulder, handHints } = joints;
+
   // Check confidence thresholds
   if (wrist.visibility < MIN_CONFIDENCE || elbow.visibility < MIN_CONFIDENCE) {
     return null;

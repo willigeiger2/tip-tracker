@@ -21,7 +21,9 @@ import Transport from '../components/Transport.astro';
     detect,
     resetCurrentDetector,
     setFencerLengthSmoothingAlpha,
+    setFencerWeaponArm,
   } from '../lib/unified-detector';
+  import type { WeaponArmMode } from '../lib/fencers/arm-selector';
   import { TrailManager } from '../lib/trail-manager';
   import { TrailRenderer, DebugRenderer } from '../lib/renderer';
   import { EffectManager } from '../lib/effects';
@@ -130,6 +132,8 @@ import Transport from '../components/Transport.astro';
   const fencerALengthSmoothingAlphaValue = byId<HTMLSpanElement>('fencerALengthSmoothingAlphaValue');
   const fencerAWristWeightInput = byId<HTMLInputElement>('fencerAWristWeight');
   const fencerAWristWeightValue = byId<HTMLSpanElement>('fencerAWristWeightValue');
+  const fencerAWeaponArmSelect = byId<HTMLSelectElement>('fencerAWeaponArm');
+  const fencerBWeaponArmSelect = byId<HTMLSelectElement>('fencerBWeaponArm');
   const fencerAAngleOffsetInput = byId<HTMLInputElement>('fencerAAngleOffset');
   const fencerAAngleOffsetValue = byId<HTMLSpanElement>('fencerAAngleOffsetValue');
   const fencerBTipExtensionInput = byId<HTMLInputElement>('fencerBTipExtension');
@@ -279,6 +283,26 @@ import Transport from '../components/Transport.astro';
     smoothedExtensionLength?: number;
     lengthSmoothingAlpha?: number;
     seedQuality?: number;
+    armMargin?: number | null;
+    /** Upper-body pose landmarks keyed by MediaPipe index: [x, y, visibility]. */
+    pose?: Record<number, [number, number, number]>;
+  }
+
+  // Nose, shoulders, elbows, wrists, hand points, hips: enough to re-run arm/tip heuristics offline.
+  const TRACE_POSE_LANDMARKS = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+
+  function tracePoseLandmarks(
+    landmarks: FrameData['detections'][number]['landmarks']
+  ): Record<number, [number, number, number]> | undefined {
+    if (!landmarks || landmarks.length < 25) return undefined;
+    const round = (v: number) => Math.round(v * 10000) / 10000;
+    const out: Record<number, [number, number, number]> = {};
+    for (const index of TRACE_POSE_LANDMARKS) {
+      const lm = landmarks[index];
+      if (!lm) continue;
+      out[index] = [round(lm.x), round(lm.y), round(lm.visibility ?? 0)];
+    }
+    return out;
   }
 
   interface FencersTraceEntry {
@@ -326,6 +350,8 @@ import Transport from '../components/Transport.astro';
   fencerBLengthSmoothingAlphaInput.value = initialState.fencerBLengthSmoothingAlpha.toFixed(2);
   fencerAWristWeightInput.value = String(Math.round(initialState.fencerAWristWeight * 100));
   fencerBWristWeightInput.value = String(Math.round(initialState.fencerBWristWeight * 100));
+  fencerAWeaponArmSelect.value = initialState.fencerAWeaponArm;
+  fencerBWeaponArmSelect.value = initialState.fencerBWeaponArm;
   fencerAAngleOffsetInput.value = String(initialState.fencerAAngleOffsetDeg);
   fencerBAngleOffsetInput.value = String(initialState.fencerBAngleOffsetDeg);
   fencerATipExtensionValue.textContent = initialState.fencerATipExtension.toFixed(1);
@@ -360,6 +386,10 @@ import Transport from '../components/Transport.astro';
   appState.on('fencerBWristWeight', (value) => setFencerDirectionTuning('B', { wristWeight: value }));
   appState.on('fencerAAngleOffsetDeg', (value) => setFencerDirectionTuning('A', { angleOffsetDeg: value }));
   appState.on('fencerBAngleOffsetDeg', (value) => setFencerDirectionTuning('B', { angleOffsetDeg: value }));
+  appState.on('fencerAWeaponArm', (value) => setFencerWeaponArm('A', value));
+  appState.on('fencerBWeaponArm', (value) => setFencerWeaponArm('B', value));
+  setFencerWeaponArm('A', appState.get().fencerAWeaponArm);
+  setFencerWeaponArm('B', appState.get().fencerBWeaponArm);
   setPoseTipExtension(appState.get().poseTipExtension);
   setFencerDirectionTuning('A', {
     extensionMultiplier: appState.get().fencerATipExtension,
@@ -614,6 +644,8 @@ import Transport from '../components/Transport.astro';
         smoothedExtensionLength: det.smoothedExtensionLength,
         lengthSmoothingAlpha: det.lengthSmoothingAlpha,
         seedQuality: autoSeedDetectionQuality(det),
+        armMargin: det.armMargin,
+        pose: tracePoseLandmarks(det.landmarks),
       });
     }
 
@@ -673,6 +705,8 @@ import Transport from '../components/Transport.astro';
         fencerBWristWeight: appState.get().fencerBWristWeight,
         fencerAAngleOffsetDeg: appState.get().fencerAAngleOffsetDeg,
         fencerBAngleOffsetDeg: appState.get().fencerBAngleOffsetDeg,
+        fencerAWeaponArm: appState.get().fencerAWeaponArm,
+        fencerBWeaponArm: appState.get().fencerBWeaponArm,
       },
       draftFromLiveSamples: {
         fps: draftFps,
@@ -1526,6 +1560,8 @@ import Transport from '../components/Transport.astro';
       const confidenceLabel = `${confidence}%`;
       const armSide = detection.arm;
       const arm = armSide ? armSide[0].toUpperCase() : '?';
+      const armMarginLabel =
+        typeof detection.armMargin === 'number' ? ` m${detection.armMargin.toFixed(3)}` : '';
       const rawLen = detection.rawExtensionLength;
       const smoothLen = detection.smoothedExtensionLength;
       const delta =
@@ -1540,7 +1576,7 @@ import Transport from '../components/Transport.astro';
           ? ` L${rawLen.toFixed(3)}->${smoothLen.toFixed(3)} d${delta.toFixed(3)}`
           : '';
       const label =
-        `${detection.id} ${arm} ${confidenceLabel}${lenLabel}`;
+        `${detection.id} ${arm}${armMarginLabel} ${confidenceLabel}${lenLabel}`;
       const labelAnchor = mapToCanvas(detection.tip.x, detection.tip.y);
 
       ctx.save();
@@ -2116,6 +2152,14 @@ import Transport from '../components/Transport.astro';
     const value = parseInt((e.target as HTMLInputElement).value, 10);
     fencerBAngleOffsetValue.textContent = String(value);
     appState.update({ fencerBAngleOffsetDeg: value });
+  });
+
+  fencerAWeaponArmSelect.addEventListener('change', () => {
+    appState.update({ fencerAWeaponArm: fencerAWeaponArmSelect.value as WeaponArmMode });
+  });
+
+  fencerBWeaponArmSelect.addEventListener('change', () => {
+    appState.update({ fencerBWeaponArm: fencerBWeaponArmSelect.value as WeaponArmMode });
   });
 
   effectModeSelect.addEventListener('change', (e) => {

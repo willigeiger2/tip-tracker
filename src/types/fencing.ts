@@ -81,7 +81,8 @@ export interface DetectionResult {
   side: 'left' | 'right';
   tip: TipPosition;
   landmarks: Landmark[];  // All landmarks for this detection
-  arm?: 'left' | 'right'; // selected pose arm hypothesis (pose/fencers)
+  arm?: 'left' | 'right'; // MediaPipe label of the selected weapon-arm wrist (fencers)
+  armMargin?: number | null; // forwardness lead of chosen wrist over the other (fencers, auto arm)
   handedness?: 'Left' | 'Right';  // actual hand side (hand mode only)
   rawExtensionLength?: number; // fencers length before smoothing
   smoothedExtensionLength?: number; // fencers length after smoothing

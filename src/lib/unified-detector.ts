@@ -18,7 +18,8 @@ import {
   HAND_LANDMARKS,
   HAND_CONNECTIONS
 } from './hand-detector';
-import { estimateTip, estimateTipForArm, getFencerDirectionTuning, type TrackId } from './tip-estimator';
+import { estimateTip, estimateTipFromJoints, getFencerDirectionTuning, type TrackId } from './tip-estimator';
+import { forwardSignFor, selectWeaponArm, type WeaponArmMode } from './fencers/arm-selector';
 import { FencerTracker, type TipCandidate } from './app/fencer-tracker';
 
 // Current tracking mode
@@ -32,6 +33,14 @@ const extensionSmoothingAlphaByTrack: Record<TrackId, number> = {
   A: DEFAULT_EXTENSION_SMOOTHING_ALPHA,
   B: DEFAULT_EXTENSION_SMOOTHING_ALPHA,
 };
+const weaponArmModeByTrack: Record<TrackId, WeaponArmMode> = { A: 'auto', B: 'auto' };
+const previousWristByTrack: Record<TrackId, { x: number; y: number } | null> = { A: null, B: null };
+
+export function setFencerWeaponArm(track: TrackId, mode: WeaponArmMode): void {
+  weaponArmModeByTrack[track] = mode;
+  previousWristByTrack[track] = null;
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -170,8 +179,11 @@ async function detectPoseMode(
   const inFencersMode = currentMode === 'fencers';
 
   const candidates: TipCandidate[] = [];
-  for (const pose of poses.slice(0, 2)) {
-    const bodyX = poseBodyAnchorX(pose.landmarks);
+  const usablePoses = poses.slice(0, 2);
+  const bodyXs = usablePoses.map((pose) => poseBodyAnchorX(pose.landmarks));
+  for (const [poseIndex, pose] of usablePoses.entries()) {
+    const bodyX = bodyXs[poseIndex];
+    const opponentBodyX = bodyXs.length === 2 ? bodyXs[1 - poseIndex] : null;
     const side = bodyX < 0.5 ? 'left' : 'right';
 
     if (!inFencersMode) {
@@ -186,14 +198,20 @@ async function detectPoseMode(
       continue;
     }
 
-    const forcedArm = 'right' as const;
     const tuningTrack = trackForBodyX(bodyX);
-    const rawTip = estimateTipForArm(pose, timestamp, side, forcedArm, tuningTrack);
+    const selection = selectWeaponArm(
+      pose.landmarks,
+      bodyX,
+      forwardSignFor(bodyX, opponentBodyX),
+      weaponArmModeByTrack[tuningTrack],
+      previousWristByTrack[tuningTrack]
+    );
+    if (!selection) continue;
+    const rawTip = estimateTipFromJoints(selection, timestamp, side, tuningTrack);
     if (!rawTip) continue;
+    previousWristByTrack[tuningTrack] = { x: selection.wrist.x, y: selection.wrist.y };
 
-    const wrist = pose.landmarks[POSE_LANDMARKS.RIGHT_WRIST];
-    const elbow = pose.landmarks[POSE_LANDMARKS.RIGHT_ELBOW];
-    if (!wrist || !elbow) continue;
+    const { wrist, elbow } = selection;
 
     const rawDirDx = rawTip.x - wrist.x;
     const rawDirDy = rawTip.y - wrist.y;
@@ -219,7 +237,8 @@ async function detectPoseMode(
       tip: baseTip,
       landmarks: pose.landmarks,
       bodyX,
-      arm: forcedArm,
+      arm: selection.label,
+      armMargin: selection.margin,
       rawExtensionLength,
       smoothedExtensionLength,
       lengthSmoothingAlpha: extensionSmoothingAlphaByTrack[tuningTrack],
@@ -276,6 +295,8 @@ export async function resetCurrentDetector(): Promise<void> {
   resetHandDetector();
   fencerTracker.reset();
   resetExtensionSmoothing();
+  previousWristByTrack.A = null;
+  previousWristByTrack.B = null;
   // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 }
