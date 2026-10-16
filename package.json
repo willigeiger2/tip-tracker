@@ -24,7 +24,8 @@
 	"dependencies": {
 		"@astrojs/cloudflare": "^14.3.3",
 		"@mediapipe/tasks-vision": "^0.10.35",
-		"astro": "^7.3.5"
+		"astro": "^7.3.5",
+		"mediabunny": "^1.61.5"
 	},
 	"devDependencies": {
 		"@astrojs/check": "^0.9.10",

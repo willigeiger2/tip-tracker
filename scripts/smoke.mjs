@@ -350,6 +350,48 @@ async function main() {
       return `rows ${before} -> ${afterAdd} -> ${afterDelete}; ${await page.locator('#recordedStatus').innerText()}`;
     });
 
+    await step('hits: toggle with X, list and seek-bar tick', async () => {
+      await ensureMenuOpen();
+      if (!(await page.locator('#recordedEditToggle').isChecked())) await page.check('#recordedEditToggle');
+      await page.evaluate(() => {
+        const v = document.querySelector('video');
+        v.pause();
+        v.currentTime = 12.0;
+      });
+      await page.waitForTimeout(400);
+      const rows = () => page.locator('#recordedHitList .recorded-hit-row').count();
+      const before = await rows();
+      await page.locator('#transportPlayPause').focus();
+      await page.keyboard.press('x');
+      await page.waitForTimeout(200);
+      const added = await rows();
+      const ticks = await page.locator('#transportHitTicks span').count();
+      if (added !== before + 1 || ticks !== added) throw new Error(`rows ${before} -> ${added}, ticks ${ticks}`);
+      await page.keyboard.press('x');
+      await page.waitForTimeout(200);
+      if ((await rows()) !== before) throw new Error('second X did not remove the hit');
+      await page.keyboard.press('x'); // leave one hit for the MP4 export step
+      return `rows ${before} -> ${added} -> ${before} -> ${added}`;
+    });
+
+    await step('mp4 export (short range)', async () => {
+      await ensureMenuOpen();
+      await page.uncheck('#recordedEditToggle');
+      await page.fill('#exportStart', '0:12.0');
+      await page.fill('#exportEnd', '0:12.3');
+      const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout: 120000 }),
+        page.click('#exportMp4'),
+      ]);
+      const bytes = (await streamToString(await download.createReadStream())).length;
+      const status = await page.locator('#exportStatus').innerText();
+      if (!/\.mp4$/.test(download.suggestedFilename()) || bytes < 1000) {
+        throw new Error(`bad export: ${download.suggestedFilename()} ${bytes} bytes; ${status}`);
+      }
+      if (!/Exported \d+ frames, \d+x\d+/.test(status)) throw new Error(`status "${status}"`);
+      return status;
+    });
+
     await step('recorded export / import', async () => {
       await ensureMenuOpen();
       const [download] = await Promise.all([page.waitForEvent('download'), page.click('#recordedExportJson')]);

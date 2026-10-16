@@ -1,0 +1,130 @@
+---
+// MP4 export of recorded playback (video + trails + hit effects, native resolution, no UI).
+---
+
+<div class="recorded-export">
+  <div class="recorded-list-header">
+    <span>Export MP4</span>
+    <small class="hint">video + trails + hits, no UI</small>
+  </div>
+  <div class="export-range">
+    <label for="exportStart">Start</label>
+    <input id="exportStart" type="text" inputmode="decimal" value="0:00.0" spellcheck="false" />
+    <button id="exportStartFromPlayhead" type="button" class="btn-secondary compact-btn">Set to playhead</button>
+    <label for="exportEnd">End</label>
+    <input id="exportEnd" type="text" inputmode="decimal" value="" spellcheck="false" />
+    <button id="exportEndFromPlayhead" type="button" class="btn-secondary compact-btn">Set to playhead</button>
+  </div>
+  <div class="recorded-actions">
+    <button id="exportMp4" type="button" class="btn-secondary compact-btn">Export MP4</button>
+    <button id="exportCancel" type="button" class="btn-secondary compact-btn" disabled>Cancel</button>
+  </div>
+  <span id="exportStatus" class="hint"></span>
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { events, session, video } from '../../lib/client/app';
+  import { downloadBlob } from '../../lib/client/download';
+  import { formatClock } from '../../lib/client/format';
+  import { exportRecordedMp4, parseClock } from '../../lib/client/mp4-export';
+
+  const startInput = byId<HTMLInputElement>('exportStart');
+  const endInput = byId<HTMLInputElement>('exportEnd');
+  const startFromPlayhead = byId<HTMLButtonElement>('exportStartFromPlayhead');
+  const endFromPlayhead = byId<HTMLButtonElement>('exportEndFromPlayhead');
+  const exportBtn = byId<HTMLButtonElement>('exportMp4');
+  const cancelBtn = byId<HTMLButtonElement>('exportCancel');
+  const status = byId<HTMLSpanElement>('exportStatus');
+
+  let abort: AbortController | null = null;
+
+  function setBusy(busy: boolean): void {
+    exportBtn.disabled = busy;
+    cancelBtn.disabled = !busy;
+    startInput.disabled = busy;
+    endInput.disabled = busy;
+    startFromPlayhead.disabled = busy;
+    endFromPlayhead.disabled = busy;
+  }
+
+  function resetRange(): void {
+    startInput.value = formatClock(0);
+    endInput.value = Number.isFinite(video.duration) ? formatClock(video.duration) : '';
+  }
+
+  video.addEventListener('loadedmetadata', resetRange);
+  events.on('source', resetRange);
+  startFromPlayhead.addEventListener('click', () => (startInput.value = formatClock(video.currentTime)));
+  endFromPlayhead.addEventListener('click', () => (endInput.value = formatClock(video.currentTime)));
+
+  exportBtn.addEventListener('click', async () => {
+    const start = parseClock(startInput.value);
+    const end = parseClock(endInput.value || formatClock(video.duration));
+    if (start === null || end === null || end <= start) {
+      status.textContent = 'Enter a start and end like 1:23.4 (end after start).';
+      return;
+    }
+    abort = new AbortController();
+    setBusy(true);
+    const began = performance.now();
+    status.textContent = 'Preparing export...';
+    try {
+      const result = await exportRecordedMp4(
+        start,
+        end,
+        ({ done, total }) => {
+          status.textContent = `Rendering frame ${done} / ${total} (${Math.round((done / total) * 100)}%)`;
+        },
+        abort.signal
+      );
+      const name = `tiptrack-${session.currentVideoId ?? 'video'}-${formatClock(start)}-${formatClock(end)}.mp4`.replace(/:/g, '');
+      downloadBlob(result.blob, name);
+      const secs = ((performance.now() - began) / 1000).toFixed(1);
+      status.textContent =
+        `Exported ${result.frames} frames, ${result.width}x${result.height} @ ${result.fps.toFixed(2).replace(/\.00$/, '')}fps ` +
+        `(${result.codec}, ${(result.blob.size / 1e6).toFixed(1)} MB) in ${secs}s.`;
+    } catch (error) {
+      const err = error as Error;
+      status.textContent = err.name === 'AbortError' ? 'Export canceled.' : `Export failed: ${err.message}`;
+      if (err.name !== 'AbortError') console.warn('MP4 export failed:', error);
+    } finally {
+      abort = null;
+      setBusy(false);
+    }
+  });
+
+  cancelBtn.addEventListener('click', () => abort?.abort());
+</script>
+
+<style>
+  .recorded-export {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .export-range {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .export-range input {
+    min-width: 0;
+    padding: 6px 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+  }
+
+  .export-range button {
+    width: auto;
+    white-space: nowrap;
+  }
+</style>

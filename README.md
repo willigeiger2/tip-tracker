@@ -58,6 +58,20 @@ Debug modes (landmarks, skeleton, vectors, lightsaber, heatmap, ...) are selecta
    Edits autosave to KV with a localStorage mirror.
 5. Export JSON from the recorded panel to keep a file copy.
 
+Drafts replace keyframes only inside the time ranges that were captured, so earlier corrections
+elsewhere in the video are kept. Seeking backward clears the capture: generate before going back.
+
+## Hits and demo export
+
+- **Hits:** in the keyframe editor, `X` toggles a hit (scoring touch) for the active track on
+  the current frame. Hits are saved with the track set, listed in the editor, and shown as
+  ticks on the seek bar. During playback each hit plays a **Hit Effect** (recorded panel):
+  a flash tinted with the scorer's color and/or a pseudo-3D burst of streaks from their tip.
+  Effects are a function of video time, so pausing, scrubbing and stepping show the exact frame.
+- **Export MP4:** renders video + trails + hit effects frame by frame at the source's native
+  resolution and reported fps (H.264 via WebCodecs, no UI in the output). Slower than real
+  time (~6 frames/s for 1080p HLS) but never drops frames. Set start/end, then Export.
+
 ## Evaluating tracking against truth
 
 In fencers mode, **Export Trace** downloads the per-inference-frame tips (plus upper-body pose
@@ -84,18 +98,21 @@ src/
 │   ├── ControlPanel.astro        # collapsible panel shell + shared panel styles
 │   ├── Transport.astro           # video transport bar + keyboard shortcuts
 │   ├── panel/                    # panel sections: Source, Tracking, Fencers (+ FencerTuningCard),
-│   │                             # Recorded, SavedVideos, Display, PanelFooter
+│   │                             # Recorded (+ RecordedHits, RecordedExport), SavedVideos,
+│   │                             # Display, PanelFooter
 │   └── controls/                 # RangeControl / SelectControl bound to app state
 ├── lib/
 │   ├── client/                   # browser controllers used by component scripts: app context +
 │   │                             # events, sources, transport, recorded editing, auto-seed,
-│   │                             # fencers trace, library, overlays, shortcuts, boot
+│   │                             # fencers trace, library, overlays, shortcuts, hit effects,
+│   │                             # MP4 export, boot
 │   ├── app/                      # state store, main loop, render modes, coordinate mapping,
 │   │                             # overlay sizing, detector controller, fencer A/B tracker,
 │   │                             # frame-rate detection, video sources (camera, URL)
 │   ├── fencers/arm-selector.ts   # weapon-arm choice for fencers mode
 │   ├── recorded/                 # track schema, interpolation, playback, keyframe editing,
-│   │                             # auto-seed, localStorage store, KV client/repository
+│   │                             # auto-seed, hits + hit-effect model, localStorage store,
+│   │                             # KV client/repository
 │   ├── detector.ts, hand-detector.ts, unified-detector.ts   # MediaPipe wrappers
 │   ├── tip-estimator.ts          # forearm-extension tip estimate
 │   ├── trail-manager.ts, renderer.ts, effects.ts

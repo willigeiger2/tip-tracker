@@ -5,6 +5,7 @@
 
 import type { DebugMode, EffectMode, TrackingMode } from '../../types/fencing';
 import type { WeaponArmMode } from '../fencers/arm-selector';
+import type { HitEffectMode } from '../recorded/hit-effects';
 
 export interface AppState {
   trackingMode: TrackingMode;
@@ -32,6 +33,8 @@ export interface AppState {
   /** Fencers mode: weapon arm per fencer ('auto' = wrist furthest toward the opponent). */
   fencerAWeaponArm: WeaponArmMode;
   fencerBWeaponArm: WeaponArmMode;
+  /** Recorded mode: effect drawn for hand-marked hits. */
+  hitEffect: HitEffectMode;
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -52,6 +55,7 @@ export const DEFAULT_APP_STATE: AppState = {
   fencerBLengthSmoothingAlpha: 0.68,
   fencerAWeaponArm: 'auto',
   fencerBWeaponArm: 'auto',
+  hitEffect: 'both',
 };
 
 export type StateListener<T> = (state: Readonly<T>, changed: ReadonlySet<keyof T>) => void;
