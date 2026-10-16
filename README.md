@@ -66,7 +66,9 @@ elsewhere in the video are kept. Seeking backward clears the capture: generate b
 - **Hits:** in the keyframe editor, `X` toggles a hit (scoring touch) for the active track on
   the current frame. Hits are saved with the track set, listed in the editor, and shown as
   ticks on the seek bar. During playback each hit plays a **Hit Effect** (recorded panel):
-  a flash tinted with the scorer's color and/or a pseudo-3D burst of streaks from their tip.
+  a flash tinted with the scorer's color and/or pseudo-3D streaks from their tip: **Shards**
+  (default; no drag, strong gravity: straight shards of light that arc and fall) or **Burst**
+  (strong drag: sparks that stop near the tip and sag).
   Effects are a function of video time, so pausing, scrubbing and stepping show the exact frame.
 - **Export MP4:** renders video + trails + hit effects frame by frame at the source's native
   resolution and reported fps (H.264 via WebCodecs, no UI in the output). Slower than real
