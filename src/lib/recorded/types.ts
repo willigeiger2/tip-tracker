@@ -6,6 +6,12 @@ export interface Keyframe {
 
 export type RecordedTrackId = 'A' | 'B';
 
+/** A scoring touch, set by hand on a frame. `trackId` is the fencer who scored. */
+export interface Hit {
+  time: number;
+  trackId: RecordedTrackId;
+}
+
 export interface RecordedTrack {
   id: RecordedTrackId;
   label: string;
@@ -22,6 +28,8 @@ export interface RecordedTrackSet {
   createdAt: number;
   updatedAt: number;
   tracks: RecordedTrack[];
+  /** Scoring touches, sorted by time. Optional so older saved sets stay valid. */
+  hits?: Hit[];
 }
 
 export interface RecordedTrackSetSummary {

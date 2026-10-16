@@ -30,7 +30,10 @@
     Next KF
   </button>
 
-  <input id="transportSeek" type="range" min="0" max="1" step="1" value="0" />
+  <div class="transport-seek-wrap">
+    <input id="transportSeek" type="range" min="0" max="1" step="1" value="0" />
+    <div id="transportHitTicks" class="transport-hit-ticks" aria-hidden="true"></div>
+  </div>
 
   <span id="transportReadout">0:00.0 / 0:00.0 f0</span>
   <button id="transportFps" class="transport-fps" type="button" title="Click to override FPS">
@@ -43,7 +46,7 @@
   import { frameIndex, seekTimeForFrame } from '../lib/app/frame-rate';
   import { appState, events, isVideoSource, session, video } from '../lib/client/app';
   import { formatClock } from '../lib/client/format';
-  import { activeTrackHasKeyframes, jumpNeighborKeyframe } from '../lib/client/recorded';
+  import { activeTrackHasKeyframes, getHits, getTrackSet, jumpNeighborKeyframe } from '../lib/client/recorded';
   import { installShortcuts } from '../lib/client/shortcuts';
   import {
     beginSeekDrag,
@@ -64,6 +67,27 @@
   const seek = byId<HTMLInputElement>('transportSeek');
   const readout = byId<HTMLSpanElement>('transportReadout');
   const fpsBtn = byId<HTMLButtonElement>('transportFps');
+  const hitTicks = byId<HTMLDivElement>('transportHitTicks');
+
+  /** Hit markers over the seek bar (recorded mode). Rebuilt only when hits or duration change. */
+  let hitTicksKey = '';
+  function renderHitTicks(duration: number): void {
+    const show = appState.get().trackingMode === 'recorded' && duration > 0;
+    const hits = show ? getHits() : [];
+    const key = `${duration}|${hits.map((h) => `${h.trackId}${h.time}`).join(',')}`;
+    if (key === hitTicksKey) return;
+    hitTicksKey = key;
+    const colors = new Map((getTrackSet()?.tracks ?? []).map((t) => [t.id, t.color]));
+    hitTicks.innerHTML = '';
+    for (const hit of hits) {
+      const tick = document.createElement('span');
+      const frac = Math.min(1, Math.max(0, hit.time / duration));
+      // Range thumbs are ~16px wide, so the track runs from 8px to (100% - 8px).
+      tick.style.left = `calc(8px + ${frac} * (100% - 16px))`;
+      tick.style.background = colors.get(hit.trackId) ?? '#fff';
+      hitTicks.appendChild(tick);
+    }
+  }
 
   function render(): void {
     const uiFps = frameRate();
@@ -72,6 +96,7 @@
     const currentFrame = frameIndex(video.currentTime, uiFps);
     const maxFrame = Math.max(0, frameIndex(duration, uiFps));
     const drag = seekDragState();
+    renderHitTicks(duration);
 
     seek.min = '0';
     seek.max = String(Math.max(1, maxFrame));
@@ -166,11 +191,35 @@
     cursor: not-allowed;
   }
 
-  #transportSeek {
+  .transport-seek-wrap {
+    position: relative;
     flex: 1;
     min-width: 110px;
     margin: 0 4px;
+    display: flex;
+    align-items: center;
+  }
+
+  #transportSeek {
+    width: 100%;
+    margin: 0;
     cursor: pointer;
+  }
+
+  .transport-hit-ticks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .transport-hit-ticks :global(span) {
+    position: absolute;
+    top: 0;
+    width: 3px;
+    height: 100%;
+    margin-left: -1.5px;
+    border-radius: 2px;
+    opacity: 0.9;
   }
 
   #transportReadout {

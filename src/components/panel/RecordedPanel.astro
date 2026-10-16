@@ -1,5 +1,8 @@
 ---
-// Recorded tracks for the current video: JSON import/export and the keyframe editor.
+// Recorded tracks for the current video: JSON import/export, hit effect, and the keyframe editor.
+import SelectControl from '../controls/SelectControl.astro';
+import RecordedExport from './RecordedExport.astro';
+import RecordedHits from './RecordedHits.astro';
 ---
 
 <div id="recordedPanel" class="control-group hidden">
@@ -13,6 +16,22 @@
   <input id="recordedImportFile" type="file" accept="application/json,.json" class="hidden" />
   <small class="hint">Tip: leave the JSON box empty and click Import JSON to pick a file.</small>
   <span id="recordedStatus" class="hint">No recorded keyframes loaded.</span>
+
+  <div class="recorded-hit-effect">
+    <SelectControl
+      id="hitEffect"
+      label="Hit Effect"
+      stateKey="hitEffect"
+      options={[
+        { value: 'both', label: 'Flash + Burst' },
+        { value: 'burst', label: 'Burst' },
+        { value: 'flash', label: 'Flash' },
+        { value: 'off', label: 'Off' },
+      ]}
+    />
+  </div>
+
+  <RecordedExport />
 
   <div class="recorded-editor">
     <label class="inline-toggle">
@@ -51,6 +70,8 @@
         </div>
         <div id="recordedKeyframeList" class="recorded-keyframe-list"></div>
       </div>
+
+      <RecordedHits />
     </div>
   </div>
 </div>
@@ -231,6 +252,13 @@
 
   .recorded-list-wrap {
     margin-top: 10px;
+  }
+
+  .recorded-hit-effect {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .recorded-keyframe-list :global(.recorded-keyframe-row) {

@@ -6,6 +6,8 @@ import { nearestNeighborFrames } from '../recorded/keyframes';
 import type { FrameData } from '../app/render-modes';
 import { appState, mapToCanvas, video } from './app';
 import { currentFrame, getActiveTrack, getRecordedFps, getTrack, getTrackSet, isEditorActive } from './recorded';
+import { hitColor, hitOrigin } from './hit-effects';
+import { listHitsWithFrames } from '../recorded/hits';
 
 let showFencersDebugOverlay = false;
 
@@ -250,3 +252,36 @@ export function drawRecordedEditorOverlay(overlayCanvas: HTMLCanvasElement): voi
   });
 }
 
+
+/** Editor marker for hits on the current frame: a ring at the scoring tip and a HIT label. */
+export function drawHitMarkers(overlayCanvas: HTMLCanvasElement): void {
+  const set = getTrackSet();
+  if (!set?.hits?.length) return;
+  const ctx = overlayCanvas.getContext('2d');
+  if (!ctx) return;
+  const frame = currentFrame();
+  const hits = listHitsWithFrames(set.hits, getRecordedFps()).filter((h) => h.frame === frame);
+  hits.forEach((hit, index) => {
+    const color = hitColor(set, hit);
+    const origin = hitOrigin(set, hit);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 3;
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    if (origin) {
+      const p = mapToCanvas(origin.x, origin.y);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillText(`HIT ${hit.trackId}`, p.x, p.y - 20 - index * 16);
+    } else {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`HIT ${hit.trackId} (no tip)`, 12, 12 + index * 18);
+    }
+    ctx.restore();
+  });
+}

@@ -1,0 +1,130 @@
+---
+// Hits (scoring touches) in the keyframe editor: toggle on the current frame, list, jump, delete.
+---
+
+<div class="recorded-hits">
+  <div class="recorded-list-header">
+    <span>Hits</span>
+    <small class="hint">X toggles a hit for the active track</small>
+  </div>
+  <button id="recordedToggleHit" type="button" class="btn-secondary compact-btn">Toggle Hit At Frame (X)</button>
+  <div id="recordedHitList" class="recorded-hit-list"></div>
+</div>
+
+<script>
+  import { byId } from '../../lib/client/dom';
+  import { events } from '../../lib/client/app';
+  import { formatClock } from '../../lib/client/format';
+  import { listHitsWithFrames } from '../../lib/recorded/hits';
+  import {
+    currentFrame,
+    deleteHit,
+    getHits,
+    getRecordedFps,
+    isEditorActive,
+    jumpToFrame,
+    toggleActiveHitAtCurrentFrame,
+  } from '../../lib/client/recorded';
+
+  const toggleBtn = byId<HTMLButtonElement>('recordedToggleHit');
+  const list = byId<HTMLDivElement>('recordedHitList');
+
+  function render(): void {
+    toggleBtn.disabled = !isEditorActive();
+    list.innerHTML = '';
+    const rows = listHitsWithFrames(getHits(), getRecordedFps());
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="hint">No hits yet.</div>';
+      return;
+    }
+    const here = currentFrame();
+    rows.forEach((row, index) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = `recorded-hit-row track-${row.trackId}${row.frame === here ? ' current' : ''}`;
+
+      const jump = document.createElement('button');
+      jump.type = 'button';
+      jump.className = 'recorded-hit-jump';
+      jump.dataset.index = String(index);
+      jump.textContent = `${row.trackId}  f${row.frame}  ${formatClock(row.time)}`;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'recorded-hit-delete';
+      del.dataset.index = String(index);
+      del.textContent = 'Del';
+
+      rowEl.appendChild(jump);
+      rowEl.appendChild(del);
+      list.appendChild(rowEl);
+    });
+  }
+
+  toggleBtn.addEventListener('click', () => {
+    if (isEditorActive()) toggleActiveHitAtCurrentFrame();
+  });
+
+  list.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const row = listHitsWithFrames(getHits(), getRecordedFps())[Number(target.dataset.index)];
+    if (!row) return;
+    if (target.classList.contains('recorded-hit-jump')) jumpToFrame(row.frame);
+    else if (target.classList.contains('recorded-hit-delete')) deleteHit(row);
+  });
+
+  events.on('recorded', render);
+  events.on('transport', render);
+  render();
+</script>
+
+<style>
+  .recorded-hits {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .recorded-hit-list {
+    max-height: 140px;
+    overflow-y: auto;
+  }
+
+  .recorded-hit-list :global(.recorded-hit-row) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    margin-bottom: 4px;
+    border-left: 3px solid transparent;
+    padding-left: 4px;
+  }
+
+  .recorded-hit-list :global(.recorded-hit-row.track-A) {
+    border-left-color: #00ff00;
+  }
+
+  .recorded-hit-list :global(.recorded-hit-row.track-B) {
+    border-left-color: #ff5030;
+  }
+
+  .recorded-hit-list :global(.recorded-hit-row.current .recorded-hit-jump) {
+    border-color: rgba(255, 255, 255, 0.7);
+  }
+
+  .recorded-hit-list :global(.recorded-hit-jump),
+  .recorded-hit-list :global(.recorded-hit-delete) {
+    padding: 6px 8px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .recorded-hit-list :global(.recorded-hit-delete) {
+    min-width: 46px;
+  }
+</style>

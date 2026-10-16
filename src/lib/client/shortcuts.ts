@@ -1,7 +1,12 @@
 // Keyboard shortcuts for video mode: transport (space, arrows, Home/End) and keyframe editing.
 
 import { appState, isVideoSource } from './app';
-import { deleteActiveKeyframeAtCurrentFrame, isEditorActive, jumpNeighborKeyframe } from './recorded';
+import {
+  deleteActiveKeyframeAtCurrentFrame,
+  isEditorActive,
+  jumpNeighborKeyframe,
+  toggleActiveHitAtCurrentFrame,
+} from './recorded';
 import { seekSeconds, seekToEnd, seekToStart, stepFrames, togglePlay } from './transport';
 
 function shouldIgnore(target: EventTarget | null): boolean {
@@ -32,6 +37,12 @@ export function installShortcuts(): void {
         jumpNeighborKeyframe(1);
         return;
       }
+    }
+
+    if (isEditorActive() && (e.key === 'x' || e.key === 'X')) {
+      e.preventDefault();
+      toggleActiveHitAtCurrentFrame();
+      return;
     }
 
     if (isEditorActive() && (e.key === 'Delete' || e.key === 'Backspace')) {

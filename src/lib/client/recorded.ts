@@ -11,7 +11,8 @@ import {
   saveTrackSet,
   trackSetToSummary,
 } from '../recorded/track-store';
-import type { Keyframe, RecordedTrackSet } from '../recorded/types';
+import type { Hit, Keyframe, RecordedTrackSet } from '../recorded/types';
+import { removeHit, toggleHitAtFrame } from '../recorded/hits';
 import { fetchTrackSetFromKv, saveTrackSetToKv } from '../recorded/kv-client';
 import {
   deleteKeyframeAtFrame,
@@ -442,6 +443,30 @@ export function activeTrackLabel(): string {
   return activeTrack === 'A' ? 'Track A (green)' : 'Track B (red)';
 }
 
+// ---- Hits ----
+
+export function getHits(): readonly Hit[] {
+  return trackSet?.hits ?? [];
+}
+
+/** Toggle a hit for the active track at the current frame (X). Returns true if added. */
+export function toggleActiveHitAtCurrentFrame(): boolean {
+  if (!trackSet) return false;
+  const result = toggleHitAtFrame(getHits(), activeTrack, currentFrame(), getRecordedFps());
+  trackSet.hits = result.hits;
+  changed();
+  scheduleAutosave();
+  publishStatus(`${result.added ? 'Added' : 'Removed'} hit for ${activeTrackLabel()} at f${currentFrame()}.`);
+  return result.added;
+}
+
+export function deleteHit(hit: Hit): void {
+  if (!trackSet) return;
+  trackSet.hits = removeHit(getHits(), hit);
+  changed();
+  scheduleAutosave();
+}
+
 export function clearActiveTrack(): void {
   const track = getTrack(activeTrack);
   if (!track) return;
@@ -453,9 +478,14 @@ export function clearActiveTrack(): void {
 
 // ---- Playback ----
 
-setRecordedFrameProvider((mediaTime, timestamp, trailSamples) => {
-  if (appState.get().trackingMode !== 'recorded') return null;
+/** Trails and tips of the loaded track set at `mediaTime` (used by playback and MP4 export). */
+export function recordedSnapshotAt(mediaTime: number, timestamp: number, trailSamples: number) {
   if (!trackSet) return null;
   const trailWindowSeconds = Math.max(0.25, trailSamples / Math.max(1, trackSet.fps));
   return buildRecordedFrameSnapshot(trackSet, mediaTime, timestamp, trailSamples, trailWindowSeconds);
+}
+
+setRecordedFrameProvider((mediaTime, timestamp, trailSamples) => {
+  if (appState.get().trackingMode !== 'recorded') return null;
+  return recordedSnapshotAt(mediaTime, timestamp, trailSamples);
 });

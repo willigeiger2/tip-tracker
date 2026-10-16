@@ -1,6 +1,7 @@
 import {
   DEFAULT_MAX_GAP_SECONDS,
   DEFAULT_RECORDED_FPS,
+  type Hit,
   type Keyframe,
   type RecordedTrack,
   type RecordedTrackId,
@@ -24,6 +25,18 @@ function clamp01(value: number): number {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function normalizeHits(raw: unknown): Hit[] {
+  if (!Array.isArray(raw)) return [];
+  const hits: Hit[] = [];
+  for (const item of raw) {
+    const hit = item as Partial<Hit> | null;
+    if (!hit || !isFiniteNumber(hit.time) || hit.time < 0) continue;
+    if (hit.trackId !== 'A' && hit.trackId !== 'B') continue;
+    hits.push({ time: hit.time, trackId: hit.trackId });
+  }
+  return hits.sort((a, b) => a.time - b.time);
 }
 
 function normalizeKeyframes(raw: unknown, fps: number): Keyframe[] {
@@ -131,6 +144,7 @@ export function normalizeTrackSet(
       normalizeTrack(trackById(candidate.tracks, 'A'), 'A', fps),
       normalizeTrack(trackById(candidate.tracks, 'B'), 'B', fps),
     ],
+    hits: normalizeHits(candidate.hits),
   };
 }
 
