@@ -14,10 +14,16 @@ type Mapper = (normX: number, normY: number) => { x: number; y: number };
 /** Nearest keyframe within this window is used when the tip isn't tracked exactly at the hit. */
 const ORIGIN_FALLBACK_SECONDS = 0.5;
 
+/**
+ * Burst origin: the scorer's tip where it is drawn on the hit frame. Playback and export show a
+ * frame's tip at the frame center, so sample there (not at the frame start, which lags behind a
+ * fast-moving tip by half a frame).
+ */
 export function hitOrigin(set: RecordedTrackSet, hit: Hit): { x: number; y: number } | null {
   const track = set.tracks.find((t) => t.id === hit.trackId);
   if (!track || track.keyframes.length === 0) return null;
-  const sampled = sampleTrackAt(track, hit.time, { fps: set.fps, maxGapSeconds: set.maxGapSeconds });
+  const frameCenter = (frameIndex(hit.time, set.fps) + 0.5) / set.fps;
+  const sampled = sampleTrackAt(track, frameCenter, { fps: set.fps, maxGapSeconds: set.maxGapSeconds });
   if (sampled) return { x: sampled.x, y: sampled.y };
   let best: { x: number; y: number } | null = null;
   let bestDt = ORIGIN_FALLBACK_SECONDS;

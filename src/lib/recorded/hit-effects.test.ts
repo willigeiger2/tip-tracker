@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HIT_FLASH_SECONDS,
   flashAlpha,
+  flashColor,
   makeStreaks,
   mulberry32,
   project,
@@ -46,6 +47,14 @@ describe('hit burst model', () => {
     expect(flashAlpha(0)).toBeGreaterThan(0.5);
     expect(flashAlpha(HIT_FLASH_SECONDS / 2)).toBeLessThan(flashAlpha(0));
     expect(flashAlpha(HIT_FLASH_SECONDS)).toBe(0);
+  });
+
+  it('flash starts white and takes on the tint as it fades', () => {
+    expect(flashColor([0, 255, 0], 0)).toEqual([255, 255, 255]);
+    const mid = flashColor([0, 255, 0], HIT_FLASH_SECONDS * 0.15);
+    expect(mid[0]).toBeLessThan(255);
+    expect(mid[0]).toBeGreaterThan(0);
+    expect(flashColor([0, 255, 0], HIT_FLASH_SECONDS * 0.5)).toEqual([0, 255, 0]);
   });
 
   it('prng yields values in [0, 1)', () => {

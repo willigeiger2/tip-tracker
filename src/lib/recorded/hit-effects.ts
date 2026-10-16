@@ -15,7 +15,12 @@ import type { Hit } from './types';
 export type HitEffectMode = 'off' | 'flash' | 'burst' | 'both';
 
 export const HIT_FLASH_SECONDS = 0.45;
-export const HIT_BURST_SECONDS = 0.9;
+/**
+ * Burst physics run at this fraction of real time (0.75 = 75% slow motion, which reads as a
+ * slightly bigger explosion). Lifetimes stretch to match.
+ */
+const BURST_TIME_SCALE = 0.75;
+export const HIT_BURST_SECONDS = 0.9 / BURST_TIME_SCALE;
 /** Longest effect window: hits older than this draw nothing. */
 export const HIT_EFFECT_SECONDS = Math.max(HIT_FLASH_SECONDS, HIT_BURST_SECONDS);
 
@@ -28,7 +33,11 @@ const GRAVITY = 0.9;
 const CAMERA_DISTANCE = 2.2;
 /** Streak tail lags the head by this much time. */
 const STREAK_TAIL_SECONDS = 0.075;
-const FLASH_PEAK_ALPHA = 0.6;
+const FLASH_PEAK_ALPHA = 0.8;
+/** The flash starts white and takes on the scorer's tint over this fraction of its duration. */
+const FLASH_TINT_FRACTION = 0.35;
+/** Streak core width at full size, in frame heights. */
+const STREAK_WIDTH = 0.0033;
 
 export interface Vec3 {
   x: number;
@@ -100,9 +109,19 @@ export function project(p: Vec3, cameraDistance = CAMERA_DISTANCE): { x: number;
   return { x: p.x * scale, y: p.y * scale, scale };
 }
 
+function mix(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
 export function flashAlpha(age: number): number {
   if (age < 0 || age >= HIT_FLASH_SECONDS) return 0;
   return FLASH_PEAK_ALPHA * (1 - Math.sqrt(age / HIT_FLASH_SECONDS));
+}
+
+/** Flash color at `age`: white on the first frame, blending to the scorer's tint as it fades. */
+export function flashColor(tint: [number, number, number], age: number): [number, number, number] {
+  const t = Math.max(0, Math.min(1, age / (HIT_FLASH_SECONDS * FLASH_TINT_FRACTION)));
+  return mix([255, 255, 255], tint, t);
 }
 
 // ---- Drawing ----
@@ -133,10 +152,6 @@ function rgba([r, g, b]: [number, number, number], alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha))})`;
 }
 
-function mix(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-}
-
 const streakCache = new Map<number, Streak[]>();
 
 function streaksFor(hit: Hit): Streak[] {
@@ -154,7 +169,7 @@ export function drawHitFlash(ctx: CanvasRenderingContext2D, rect: VideoRect, col
   const alpha = flashAlpha(age);
   if (alpha <= 0) return;
   ctx.save();
-  ctx.fillStyle = rgba(rgb(color), alpha);
+  ctx.fillStyle = rgba(flashColor(rgb(color), age), alpha);
   ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
   ctx.restore();
 }
@@ -177,7 +192,7 @@ export function drawHitBurst(
   ctx.lineCap = 'round';
 
   // Bright core at the impact point for the first moments.
-  const coreT = age / 0.18;
+  const coreT = age / (0.18 / BURST_TIME_SCALE);
   if (coreT < 1) {
     const radius = unit * (0.015 + 0.05 * coreT);
     const gradient = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, radius);
@@ -194,15 +209,16 @@ export function drawHitBurst(
     const lifetime = HIT_BURST_SECONDS * streak.life;
     if (age >= lifetime) continue;
     const progress = age / lifetime;
-    const head = project(streakPosition(streak, age));
-    const tail = project(streakPosition(streak, age - STREAK_TAIL_SECONDS));
+    const physicsAge = age * BURST_TIME_SCALE;
+    const head = project(streakPosition(streak, physicsAge));
+    const tail = project(streakPosition(streak, physicsAge - STREAK_TAIL_SECONDS));
     const hx = origin.x + head.x * unit;
     const hy = origin.y + head.y * unit;
     const tx = origin.x + tail.x * unit;
     const ty = origin.y + tail.y * unit;
 
     const fade = Math.pow(1 - progress, 1.4);
-    const width = unit * 0.0045 * streak.width * head.scale * (1 - 0.5 * progress);
+    const width = unit * STREAK_WIDTH * streak.width * head.scale * (1 - 0.5 * progress);
     // Hot white core cooling to the fencer color.
     const coreColor = mix(white, base, Math.min(1, progress * 1.6));
 
