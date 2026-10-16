@@ -71,5 +71,5 @@ export function drawRecordedHits(
 ): void {
   const mode = appState.get().hitEffect;
   if (mode === 'off' || !set.hits?.length) return;
-  drawHitEffects(ctx, hitEffectInputs(set, mediaTime, map), mode, videoRect(map));
+  drawHitEffects(ctx, hitEffectInputs(set, mediaTime, map), mode, videoRect(map), set.fps);
 }

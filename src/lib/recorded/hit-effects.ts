@@ -33,7 +33,9 @@ const GRAVITY = 0.9;
 const CAMERA_DISTANCE = 2.2;
 /** Streak tail lags the head by this much time. */
 const STREAK_TAIL_SECONDS = 0.075;
-const FLASH_PEAK_ALPHA = 0.8;
+const FLASH_PEAK_ALPHA = 0.7;
+/** The flash starts this many frames after the hit frame (the burst starts on the hit frame). */
+const FLASH_DELAY_FRAMES = 1;
 /** The flash starts white and takes on the scorer's tint over this fraction of its duration. */
 const FLASH_TINT_FRACTION = 0.35;
 /** Streak core width at full size, in frame heights. */
@@ -247,11 +249,13 @@ export function drawHitEffects(
   ctx: CanvasRenderingContext2D,
   effects: readonly HitEffectInput[],
   mode: HitEffectMode,
-  rect: VideoRect
+  rect: VideoRect,
+  fps: number
 ): void {
   if (mode === 'off' || effects.length === 0) return;
   if (mode === 'flash' || mode === 'both') {
-    for (const e of effects) drawHitFlash(ctx, rect, e.color, e.age);
+    const flashDelay = FLASH_DELAY_FRAMES / Math.max(1, fps);
+    for (const e of effects) drawHitFlash(ctx, rect, e.color, e.age - flashDelay);
   }
   if (mode === 'burst' || mode === 'both') {
     for (const e of effects) {
