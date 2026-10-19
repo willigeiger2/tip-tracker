@@ -55,7 +55,7 @@ export const DEFAULT_APP_STATE: AppState = {
   fencerBLengthSmoothingAlpha: 0.68,
   fencerAWeaponArm: 'auto',
   fencerBWeaponArm: 'auto',
-  hitEffect: 'both',
+  hitEffect: 'flash-shards',
 };
 
 export type StateListener<T> = (state: Readonly<T>, changed: ReadonlySet<keyof T>) => void;

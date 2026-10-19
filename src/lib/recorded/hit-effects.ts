@@ -5,14 +5,45 @@
 // randomness, so pausing, scrubbing, frame stepping and frame-by-frame export all show exactly
 // the same image for a given frame.
 //
-// Burst model: streaks fly out from the tip in random directions over the hemisphere facing the
-// camera (+z toward the viewer), slowed by drag and pulled down by gravity. Positions are in
-// units of the video frame height, projected with a simple pinhole camera so streaks heading
-// toward the viewer spread faster and draw thicker and brighter.
+// Streak model: streaks fly out from the tip in random directions over the hemisphere facing the
+// camera (+z toward the viewer) and are pulled down by gravity. Positions are in units of the
+// video frame height, projected with a simple pinhole camera so streaks heading toward the
+// viewer spread faster and draw thicker and brighter. Two physics styles:
+// - shards: no drag, strong gravity: straight-flying shards of light that arc over and fall
+// - burst: strong drag, mild gravity: sparks that stop near the tip and sag
 
 import type { Hit } from './types';
 
-export type HitEffectMode = 'off' | 'flash' | 'burst' | 'both';
+export type HitEffectMode = 'flash-shards' | 'flash-burst' | 'shards' | 'burst' | 'flash' | 'off';
+export type StreakStyle = 'shards' | 'burst';
+
+export interface StreakPhysics {
+  /** Exponential drag rate (1/s); 0 = none. */
+  drag: number;
+  /** Gravity in frame heights / s^2 (screen down). */
+  gravity: number;
+}
+
+export const STREAK_PHYSICS: Record<StreakStyle, StreakPhysics> = {
+  shards: { drag: 0, gravity: 1.8 },
+  burst: { drag: 3.2, gravity: 0.9 },
+};
+
+function modeParts(mode: HitEffectMode): { flash: boolean; streaks: StreakStyle | null } {
+  switch (mode) {
+    case 'flash-shards':
+      return { flash: true, streaks: 'shards' };
+    case 'flash-burst':
+      return { flash: true, streaks: 'burst' };
+    case 'shards':
+    case 'burst':
+      return { flash: false, streaks: mode };
+    case 'flash':
+      return { flash: true, streaks: null };
+    default:
+      return { flash: false, streaks: null };
+  }
+}
 
 export const HIT_FLASH_SECONDS = 0.45;
 /**
@@ -25,10 +56,6 @@ export const HIT_BURST_SECONDS = 0.9 / BURST_TIME_SCALE;
 export const HIT_EFFECT_SECONDS = Math.max(HIT_FLASH_SECONDS, HIT_BURST_SECONDS);
 
 const STREAK_COUNT = 90;
-/** Exponential drag rate (1/s). */
-const DRAG = 3.2;
-/** Gravity in frame heights / s^2 (screen down). */
-const GRAVITY = 0.9;
 /** Camera distance from the tip plane, in frame heights. */
 const CAMERA_DISTANCE = 2.2;
 /** Streak tail lags the head by this much time. */
@@ -94,12 +121,12 @@ export function makeStreaks(seed: number, count = STREAK_COUNT): Streak[] {
 }
 
 /** Streak head position (frame heights, relative to the origin) `age` seconds after the hit. */
-export function streakPosition(streak: Streak, age: number): Vec3 {
+export function streakPosition(streak: Streak, age: number, physics: StreakPhysics = STREAK_PHYSICS.burst): Vec3 {
   const a = Math.max(0, age);
-  const dist = (streak.speed * (1 - Math.exp(-DRAG * a))) / DRAG;
+  const dist = physics.drag > 0 ? (streak.speed * (1 - Math.exp(-physics.drag * a))) / physics.drag : streak.speed * a;
   return {
     x: streak.dir.x * dist,
-    y: streak.dir.y * dist + 0.5 * GRAVITY * a * a,
+    y: streak.dir.y * dist + 0.5 * physics.gravity * a * a,
     z: streak.dir.z * dist,
   };
 }
@@ -182,9 +209,11 @@ export function drawHitBurst(
   origin: { x: number; y: number },
   frameHeightPx: number,
   color: string,
-  age: number
+  age: number,
+  style: StreakStyle = 'burst'
 ): void {
   if (age < 0 || age >= HIT_BURST_SECONDS) return;
+  const physics = STREAK_PHYSICS[style];
   const base = rgb(color);
   const white: [number, number, number] = [255, 255, 255];
   const unit = frameHeightPx;
@@ -212,8 +241,8 @@ export function drawHitBurst(
     if (age >= lifetime) continue;
     const progress = age / lifetime;
     const physicsAge = age * BURST_TIME_SCALE;
-    const head = project(streakPosition(streak, physicsAge));
-    const tail = project(streakPosition(streak, physicsAge - STREAK_TAIL_SECONDS));
+    const head = project(streakPosition(streak, physicsAge, physics));
+    const tail = project(streakPosition(streak, physicsAge - STREAK_TAIL_SECONDS, physics));
     const hx = origin.x + head.x * unit;
     const hy = origin.y + head.y * unit;
     const tx = origin.x + tail.x * unit;
@@ -252,14 +281,15 @@ export function drawHitEffects(
   rect: VideoRect,
   fps: number
 ): void {
-  if (mode === 'off' || effects.length === 0) return;
-  if (mode === 'flash' || mode === 'both') {
+  const parts = modeParts(mode);
+  if (effects.length === 0) return;
+  if (parts.flash) {
     const flashDelay = FLASH_DELAY_FRAMES / Math.max(1, fps);
     for (const e of effects) drawHitFlash(ctx, rect, e.color, e.age - flashDelay);
   }
-  if (mode === 'burst' || mode === 'both') {
+  if (parts.streaks) {
     for (const e of effects) {
-      if (e.origin) drawHitBurst(ctx, e.hit, e.origin, rect.height, e.color, e.age);
+      if (e.origin) drawHitBurst(ctx, e.hit, e.origin, rect.height, e.color, e.age, parts.streaks);
     }
   }
 }

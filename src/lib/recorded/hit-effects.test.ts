@@ -7,6 +7,7 @@ import {
   mulberry32,
   project,
   seedForHit,
+  STREAK_PHYSICS,
   streakPosition,
 } from './hit-effects';
 
@@ -32,6 +33,15 @@ describe('hit burst model', () => {
     expect(d1).toBeGreaterThan(0);
     expect(d2).toBeLessThan(d1);
     expect(streakPosition(s, 0.5).y).toBeGreaterThan(0); // gravity pulls down
+  });
+
+  it('shards fly straight at constant speed (no drag) while gravity pulls them down', () => {
+    const s = { dir: { x: 1, y: 0, z: 0 }, speed: 1, width: 1, life: 1 };
+    const p1 = streakPosition(s, 0.1, STREAK_PHYSICS.shards);
+    const p2 = streakPosition(s, 0.2, STREAK_PHYSICS.shards);
+    expect(p1.x).toBeCloseTo(0.1);
+    expect(p2.x).toBeCloseTo(0.2);
+    expect(streakPosition(s, 0.5, STREAK_PHYSICS.shards).y).toBeCloseTo(0.5 * 1.8 * 0.25);
   });
 
   it('projects points nearer the camera larger and further out', () => {
