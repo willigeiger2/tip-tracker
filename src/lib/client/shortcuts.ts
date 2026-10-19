@@ -1,10 +1,14 @@
-// Keyboard shortcuts for video mode: transport (space, arrows, Home/End) and keyframe editing.
+// Keyboard shortcuts for video mode: transport (space, arrows, Home/End) and keyframe editing
+// (E toggles edit mode, X toggles a hit, Delete removes the keyframe at the current frame).
 
 import { appState, isVideoSource } from './app';
 import {
   deleteActiveKeyframeAtCurrentFrame,
+  isEditMode,
   isEditorActive,
+  isRecordedPanelVisible,
   jumpNeighborKeyframe,
+  setEditMode,
   toggleActiveHitAtCurrentFrame,
 } from './recorded';
 import { seekSeconds, seekToEnd, seekToStart, stepFrames, togglePlay } from './transport';
@@ -25,6 +29,12 @@ export function installShortcuts(): void {
     if (!isVideoSource()) return;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (shouldIgnore(e.target)) return;
+
+    if (isRecordedPanelVisible() && (e.key === 'e' || e.key === 'E')) {
+      e.preventDefault();
+      setEditMode(!isEditMode());
+      return;
+    }
 
     if (appState.get().trackingMode === 'recorded') {
       if (e.key === '[' || e.key === ',' || e.key === 'PageUp') {
