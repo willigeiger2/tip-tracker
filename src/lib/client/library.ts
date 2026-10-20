@@ -21,7 +21,7 @@ export function savedVideoTitle(summary: RecordedTrackSetSummary): string {
     const parsed = new URL(summary.videoUrl);
     const segments = parsed.pathname.split('/').filter(Boolean);
     const tail = segments[segments.length - 1];
-    if (tail && tail !== 'video.m3u8') return tail;
+    if (tail && tail !== 'video.m3u8') return decodeURIComponent(tail);
     return summary.videoId;
   } catch {
     return summary.videoId;

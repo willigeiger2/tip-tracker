@@ -85,7 +85,30 @@ function setVideoQueryParam(url: string): void {
   history.replaceState(null, '', locationUrl.toString());
 }
 
-export async function loadVideo(url: string): Promise<void> {
+/** Identity URL for a local file: stable across opens, so its saved tracks reattach. */
+export function localFileUrl(file: File): string {
+  return `${LOCAL_FILE_PREFIX}${encodeURIComponent(file.name)}#${file.size}`;
+}
+
+export function isLocalFileUrl(url: string): boolean {
+  return url.startsWith(LOCAL_FILE_PREFIX);
+}
+
+const LOCAL_FILE_PREFIX = 'file:';
+let localObjectUrl: string | null = null;
+
+/** Play a local video file. Tracks are keyed by the file's name + size. */
+export async function loadLocalFile(file: File): Promise<void> {
+  if (localObjectUrl) URL.revokeObjectURL(localObjectUrl);
+  localObjectUrl = URL.createObjectURL(file);
+  await loadVideo(localObjectUrl, localFileUrl(file));
+}
+
+/**
+ * Load a video. `identityUrl` names it for track storage, fps overrides and the library; it
+ * differs from the playback `url` only for local files (whose blob URL changes every open).
+ */
+export async function loadVideo(url: string, identityUrl = url): Promise<void> {
   if (!isVideoSource()) {
     await switchSource('video');
   }
@@ -100,11 +123,11 @@ export async function loadVideo(url: string): Promise<void> {
 
   try {
     await urlSource.attach(video);
-    setVideoQueryParam(url);
-    await detectTransportFps(url);
+    setVideoQueryParam(identityUrl === url ? url : '');
+    await detectTransportFps(identityUrl);
     resetCapture();
     resetTrace('video loaded');
-    await loadOrCreateTrackSet(url);
+    await loadOrCreateTrackSet(identityUrl);
     void refreshLibrary({ silent: true });
     events.emit('source');
     if (appState.get().trackingMode === 'recorded') {
@@ -124,6 +147,11 @@ export async function loadVideo(url: string): Promise<void> {
 
 export async function loadVideoFromLibrary(url: string): Promise<void> {
   if (!url) return;
+  if (isLocalFileUrl(url)) {
+    const name = decodeURIComponent(url.slice(LOCAL_FILE_PREFIX.length).split('#')[0]);
+    events.emit('library-status', `Local file: open "${name}" with Open File to edit its tracks.`);
+    return;
+  }
   events.emit('video-url', url);
   events.emit('library-status', 'Loading selected library video...');
   await loadVideo(url);

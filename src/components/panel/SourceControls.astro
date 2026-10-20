@@ -1,5 +1,5 @@
 ---
-// Source picker (camera / video URL) and the video URL loader.
+// Source picker (camera / video URL) and the video loader: URL, or a local file.
 ---
 
 <div class="control-group">
@@ -19,19 +19,26 @@
     spellcheck="false"
     autocomplete="off"
   />
-  <button id="loadVideo" type="button" class="btn-secondary compact-btn">Load Video</button>
-  <small class="hint">Tip: add <code>?video=&lt;url&gt;</code> to auto-load this clip.</small>
+  <div class="recorded-actions">
+    <button id="loadVideo" type="button" class="btn-secondary compact-btn">Load Video</button>
+    <button id="openVideoFile" type="button" class="btn-secondary compact-btn">Open File…</button>
+  </div>
+  <input id="videoFileInput" type="file" accept="video/*,.mp4,.mov,.m4v,.webm" class="hidden" />
+  <small class="hint">Tip: add <code>?video=&lt;url&gt;</code> to auto-load this clip. Local files: tracks are
+    saved by file name + size.</small>
 </div>
 
 <script>
   import { byId } from '../../lib/client/dom';
   import { events, session } from '../../lib/client/app';
   import type { SourceKind } from '../../lib/app/sources/source';
-  import { loadVideo, switchSource } from '../../lib/client/sources';
+  import { loadLocalFile, loadVideo, switchSource } from '../../lib/client/sources';
 
   const sourceModeSelect = byId<HTMLSelectElement>('sourceMode');
   const videoUrlInput = byId<HTMLInputElement>('videoUrl');
   const loadVideoBtn = byId<HTMLButtonElement>('loadVideo');
+  const openFileBtn = byId<HTMLButtonElement>('openVideoFile');
+  const fileInput = byId<HTMLInputElement>('videoFileInput');
 
   const loadFromInput = () => void loadVideo(videoUrlInput.value.trim());
 
@@ -39,6 +46,14 @@
     void switchSource(sourceModeSelect.value as SourceKind);
   });
   loadVideoBtn.addEventListener('click', loadFromInput);
+  openFileBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    videoUrlInput.value = '';
+    void loadLocalFile(file);
+  });
   videoUrlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();

@@ -15,7 +15,7 @@ import { bestHlsVariant, parseHlsVariants } from '../app/hls-variants';
 import { renderFrame, type RenderContext } from '../app/render-modes';
 import { isHlsUrl } from '../app/sources/url-source';
 import { DebugRenderer, TrailRenderer } from '../renderer';
-import { appState, isVideoSource, session, video } from './app';
+import { appState, isVideoSource, session, urlSource, video } from './app';
 import { drawRecordedHits } from './hit-effects';
 import { getTrackSet, recordedSnapshotAt } from './recorded';
 
@@ -138,7 +138,8 @@ export async function exportRecordedMp4(
   signal: AbortSignal
 ): Promise<ExportResult> {
   const set = getTrackSet();
-  if (!isVideoSource() || !set || !session.currentVideoUrl) throw new Error('Load a video with recorded tracks first.');
+  const playbackUrl = urlSource.getUrl();
+  if (!isVideoSource() || !set || !playbackUrl) throw new Error('Load a video with recorded tracks first.');
   if (!video.videoWidth || !video.videoHeight) throw new Error('Video is not ready yet.');
 
   const { BufferTarget, CanvasSource, Mp4OutputFormat, Output, QUALITY_HIGH, getFirstEncodableVideoCodec } =
@@ -159,7 +160,7 @@ export async function exportRecordedMp4(
 
   const playerWasPaused = video.paused;
   video.pause();
-  const source = await createExportVideo(session.currentVideoUrl);
+  const source = await createExportVideo(playbackUrl);
 
   try {
     const duration = Number.isFinite(source.duration) ? source.duration : video.duration;
